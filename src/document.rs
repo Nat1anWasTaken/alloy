@@ -30,15 +30,19 @@ pub async fn get_or_create_doc(
     state: Arc<AppState>,
     doc_id: Uuid,
 ) -> Result<Arc<ActiveDocument>, AppError> {
-    // Fast path: read lock
+    // Prefer a read lock for the common case where the doc already exists.
+    if let Some(doc) = state
+        .docs
+        .read()
+        .await
+        .iter()
+        .find(|d| d.id == doc_id)
+        .cloned()
     {
-        let docs = state.docs.read().await;
-        if let Some(doc) = docs.iter().find(|d| d.id == doc_id) {
-            return Ok(doc.clone());
-        }
+        return Ok(doc);
     }
 
-    // Slow path: create in-memory doc and broadcast group
+    // Write lock only when creation might be needed; re-check to avoid races.
     let mut docs = state.docs.write().await;
     if let Some(doc) = docs.iter().find(|d| d.id == doc_id) {
         return Ok(doc.clone());

@@ -1,4 +1,4 @@
-mod document_manager;
+mod document;
 mod error;
 
 use axum::{
@@ -20,7 +20,7 @@ use tracing::info;
 use uuid::Uuid;
 use yrs_axum::ws::{AxumSink, AxumStream};
 
-use crate::document_manager::{get_or_create_doc, AppState};
+use crate::document::{AppState, get_or_create_doc};
 
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
@@ -59,7 +59,7 @@ async fn ws_handler(
     Ok(ws.on_upgrade(move |socket| peer(socket, doc, doc_id)))
 }
 
-async fn peer(ws: WebSocket, active_doc: Arc<document_manager::ActiveDocument>, doc_id: Uuid) {
+async fn peer(ws: WebSocket, active_doc: Arc<document::ActiveDocument>, doc_id: Uuid) {
     info!("Peer connected to {}", doc_id);
 
     let (sink, stream) = ws.split();
