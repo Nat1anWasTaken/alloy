@@ -6,20 +6,19 @@ on:
   pull_request:
     branches: ["master"]
 
+env:
+  RUSTFLAGS: "-Dwarnings"
+
 jobs:
   clippy_check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: stable
           components: clippy
 
       - name: Run Clippy
-        uses: clechasseur/rs-clippy-check@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          args: --all-features -- -D warnings
+        run: cargo clippy --all-targets --all-features
