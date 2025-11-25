@@ -16,6 +16,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
+use tower_http::trace::TraceLayer;
 use tracing::info;
 use uuid::Uuid;
 use yrs_axum::ws::{AxumSink, AxumStream};
@@ -30,6 +31,7 @@ async fn main() -> Result<(), AppError> {
 
     let app = Router::new()
         .route("/ws/{doc_id}", get(ws_handler))
+        .layer(TraceLayer::new_for_http())
         .with_state(state);
 
     let addr: SocketAddr = "0.0.0.0:3000".parse()?;
