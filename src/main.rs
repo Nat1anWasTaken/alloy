@@ -106,16 +106,16 @@ async fn get_or_create_doc(state: &AppState, doc_id: Uuid) -> Result<Arc<ActiveD
 
     info!("Loading document {}", doc_id);
 
-    let (_snapshot_name, snapshot, _last_id, _tags, updates) = document::load_doc_state(&state.db, doc_id).await?;
+    let (snapshot, updates) = document::load_doc_state(&state.db, doc_id).await?;
 
     let doc = Doc::new();
     {
         let mut txn = doc.transact_mut();
         if let Some(snap) = snapshot {
-            txn.apply_update(Update::decode_v1(&snap)?);
+            txn.apply_update(Update::decode_v1(&snap.data)?);
         }
-        for u in updates {
-            txn.apply_update(Update::decode_v1(&u)?);
+        for update in updates {
+            txn.apply_update(Update::decode_v1(&update.data)?);
         }
     }
 

@@ -7,7 +7,7 @@ use tracing::info;
 use uuid::Uuid;
 use yrs::{Doc, ReadTxn, Transact};
 
-use crate::document;
+use crate::document::DocumentRecord;
 
 /// DocumentPersistence manages all storage operations for a single document.
 /// It handles both real-time update persistence and periodic snapshots.
@@ -84,13 +84,14 @@ fn spawn_worker(
     tokio::spawn(async move {
         let mut last_snapshot = Instant::now();
         let mut updates_since_snapshot = 0u32;
+        let doc_record = DocumentRecord::new(doc_id);
 
         info!("Persistence worker started for {}", doc_id);
 
         // Process updates until channel is closed
-        while let Some(update) = update_rx.recv().await {
+        while let Some(update_data) = update_rx.recv().await {
             // Write update to database immediately
-            match document::append_update(&db, doc_id, &update).await {
+            match doc_record.save_update(&db, update_data).await {
                 Ok(id) => {
                     updates_since_snapshot += 1;
                     tracing::debug!("Update {} written for {}", id, doc_id);
@@ -107,7 +108,7 @@ fn spawn_worker(
                 || updates_since_snapshot >= 100;
 
             if should_snapshot {
-                take_snapshot(&doc, &db, doc_id, false).await;
+                take_snapshot(&doc, &doc_record, &db, false).await;
                 last_snapshot = Instant::now();
                 updates_since_snapshot = 0;
             }
@@ -115,31 +116,30 @@ fn spawn_worker(
 
         // Channel closed - all updates processed
         info!("All updates flushed for {}, taking final snapshot", doc_id);
-        take_snapshot(&doc, &db, doc_id, true).await;
+        take_snapshot(&doc, &doc_record, &db, true).await;
         info!("Persistence worker finished for {}", doc_id);
     })
 }
 
-async fn take_snapshot(doc: &Doc, db: &Pool<Postgres>, doc_id: Uuid, is_final: bool) {
+async fn take_snapshot(doc: &Doc, doc_record: &DocumentRecord, db: &Pool<Postgres>, is_final: bool) {
     let snapshot_type = if is_final { "Final" } else { "Auto" };
 
-    match document::get_last_update_id(db, doc_id).await {
-        Ok(last_id) => {
-            let snapshot = compute_snapshot(doc);
-            let snapshot_name = format!(
-                "{} Snapshot [{}]",
-                snapshot_type,
-                chrono::Utc::now().format("%Y-%m-%d %H:%M:%S")
-            );
-            let tags = vec!["system".to_string()];
+    let snapshot_data = compute_snapshot(doc);
+    let snapshot_name = format!(
+        "{} Snapshot [{}]",
+        snapshot_type,
+        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S")
+    );
 
-            if let Err(e) = document::upsert_snapshot(db, doc_id, &snapshot_name, &snapshot, last_id, &tags).await {
-                tracing::error!("Snapshot failed for {}: {}", doc_id, e);
-            } else {
-                info!("{} snapshot saved for {} (up to update {})", snapshot_type, doc_id, last_id);
-            }
+    let tags = vec!["system".to_string()];
+
+    match doc_record.create_snapshot(db, snapshot_name, snapshot_data, tags).await {
+        Ok(()) => {
+            info!("{} snapshot saved for {}", snapshot_type, doc_record.doc_id);
         }
-        Err(e) => tracing::error!("Could not get last update id for snapshot of {}: {}", doc_id, e),
+        Err(e) => {
+            tracing::error!("Snapshot failed for {}: {}", doc_record.doc_id, e);
+        }
     }
 }
 
