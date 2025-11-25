@@ -1,5 +1,7 @@
 mod database;
+mod document;
 mod error;
+mod persistence;
 
 use axum::{
     extract::{
@@ -20,7 +22,7 @@ use tokio::sync::{Mutex, RwLock};
 use tracing::info;
 use uuid::Uuid;
 use yrs::updates::decoder::Decode;
-use yrs::{sync::Awareness, Doc, ReadTxn, Transact, Update, Subscription};
+use yrs::{sync::Awareness, Doc, Transact, Update, Subscription};
 use yrs_axum::{
     broadcast::BroadcastGroup,
     ws::{AxumSink, AxumStream},
@@ -29,7 +31,8 @@ use futures_util::StreamExt;
 
 struct ActiveDocument {
     bcast: Arc<BroadcastGroup>,
-    _persistence_sub: Subscription,
+    _persistence: persistence::DocumentPersistence,
+    _observer_sub: Subscription,
 }
 
 struct AppState {
@@ -59,13 +62,11 @@ async fn main() -> Result<(), AppError> {
         .route("/ws/:doc_id", get(ws_handler))
         .with_state(state);
 
-    let addr: SocketAddr = "0.0.0.0:3000".parse().expect("valid bind address");
-    let listener = TcpListener::bind(addr).await.expect("bind failed");
+    let addr: SocketAddr = "0.0.0.0:3000".parse()?;
+    let listener = TcpListener::bind(addr).await?;
     info!("starting yrs-axum server on ws://{addr}/ws/:doc_id");
 
-    axum::serve(listener, app)
-        .await
-        .expect("server error");
+    axum::serve(listener, app).await?;
 
     Ok(())
 }
@@ -84,8 +85,8 @@ async fn ws_handler(
     Path(doc_id): Path<Uuid>,
     State(state): State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, AppError> {
-    let doc = get_or_create_doc(&state, doc_id).await?;
-    Ok(ws.on_upgrade(move |socket| peer(socket, doc.bcast.clone())))
+    let active_doc = get_or_create_doc(&state, doc_id).await?;
+    Ok(ws.on_upgrade(move |socket| peer(socket, active_doc, doc_id, state)))
 }
 
 async fn get_or_create_doc(state: &AppState, doc_id: Uuid) -> Result<Arc<ActiveDocument>, AppError> {
@@ -105,7 +106,7 @@ async fn get_or_create_doc(state: &AppState, doc_id: Uuid) -> Result<Arc<ActiveD
 
     info!("Loading document {}", doc_id);
 
-    let (_snapshot_name, snapshot, _last_id, updates) = database::load_doc_state(&state.db, doc_id).await?;
+    let (_snapshot_name, snapshot, _last_id, _tags, updates) = document::load_doc_state(&state.db, doc_id).await?;
 
     let doc = Doc::new();
     {
@@ -118,31 +119,27 @@ async fn get_or_create_doc(state: &AppState, doc_id: Uuid) -> Result<Arc<ActiveD
         }
     }
 
-    let db_clone = state.db.clone();
-    let persistence_sub = doc.observe_update_v1(move |_txn, event| {
-        let update = event.update.to_vec();
-        let db = db_clone.clone();
-        tokio::spawn(async move {
-            if let Err(e) = database::append_update(&db, doc_id, &update).await {
-                tracing::error!("Failed to append update for {}: {}", doc_id, e);
+    // Setup persistence: DocumentPersistence handles both updates and snapshots
+    let doc_persistence = persistence::DocumentPersistence::new(doc.clone(), state.db.clone(), doc_id);
+
+    // Observe document updates and send them to persistence worker
+    let update_sender = doc_persistence.sender();
+    let observer_sub = doc
+        .observe_update_v1(move |_txn, event| {
+            let update = event.update.to_vec();
+            if let Err(e) = update_sender.send(update) {
+                tracing::error!("Failed to send update to persistence worker: {}", e);
             }
-        });
-    })
-    .expect("Failed to observe update"); 
-    // Note: yrs::BorrowMutError doesn't map easily to AppError::YrsDecode, 
-    // but for now I just used a placeholder error or I should add a new variant.
-    // Actually, I should just unwrap or expect because if we can't observe a fresh doc, it's a critical logic error.
-    // However, map_err is safer than unwrap.
-    // Let's use expect since Doc::new() should be clean.
+        })
+        .map_err(|e| AppError::YrsObserve(format!("{:?}", e)))?;
 
-    spawn_snapshotter(doc.clone(), state.db.clone(), doc_id);
-
-    let awareness = Arc::new(RwLock::new(Awareness::new(doc)));
+    let awareness = Arc::new(RwLock::new(Awareness::new(doc.clone())));
     let bcast = Arc::new(BroadcastGroup::new(awareness, 32).await);
 
     let active_doc = Arc::new(ActiveDocument {
         bcast,
-        _persistence_sub: persistence_sub,
+        _persistence: doc_persistence,
+        _observer_sub: observer_sub,
     });
 
     docs.insert(doc_id, active_doc.clone());
@@ -150,41 +147,26 @@ async fn get_or_create_doc(state: &AppState, doc_id: Uuid) -> Result<Arc<ActiveD
     Ok(active_doc)
 }
 
-async fn peer(ws: WebSocket, bcast: Arc<BroadcastGroup>) {
+async fn peer(ws: WebSocket, active_doc: Arc<ActiveDocument>, doc_id: Uuid, state: Arc<AppState>) {
+    info!("Peer connected to {}", doc_id);
+
     let (sink, stream) = ws.split();
     let sink = Arc::new(Mutex::new(AxumSink::from(sink)));
     let stream = AxumStream::from(stream);
 
-    let sub = bcast.subscribe(sink, stream);
+    let sub = active_doc.bcast.subscribe(sink, stream);
     match sub.completed().await {
-        Ok(_) => info!("peer finished"),
-        Err(err) => tracing::error!("peer aborted: {err}"),
+        Ok(_) => info!("Peer finished for {}", doc_id),
+        Err(err) => tracing::error!("Peer aborted for {}: {}", doc_id, err),
     }
-}
 
-fn compute_snapshot(doc: &Doc) -> Vec<u8> {
-    let txn = doc.transact();
-    txn.encode_state_as_update_v1(&Default::default())
-}
-
-fn spawn_snapshotter(doc: Doc, db: Pool<Postgres>, doc_id: Uuid) {
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-
-            match database::get_last_update_id(&db, doc_id).await {
-                Ok(last_id) => {
-                    let snapshot = compute_snapshot(&doc);
-                    let snapshot_name = format!("Auto Snapshot [{}]", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S"));
-
-                    if let Err(e) = database::upsert_snapshot(&db, doc_id, &snapshot_name, &snapshot, last_id).await {
-                        tracing::error!("Snapshot failed for {}: {}", doc_id, e);
-                    } else {
-                         // info!("Snapshot created for {} up to {}", doc_id, last_id);
-                    }
-                }
-                Err(e) => tracing::error!("Could not get last update id for {}: {}", doc_id, e),
-            }
-        }
-    });
+    // After peer disconnects, check if we should cleanup
+    // The BroadcastGroup holds references to active subscribers
+    // If Arc::strong_count is 2 (one in HashMap, one in this function), no other peers exist
+    if Arc::strong_count(&active_doc) == 2 {
+        info!("Last peer disconnected from {}, removing from memory", doc_id);
+        let mut docs = state.docs.write().await;
+        docs.remove(&doc_id);
+        // When removed from HashMap and this function exits, Drop::drop will be called
+    }
 }

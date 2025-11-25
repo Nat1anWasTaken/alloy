@@ -1,10 +1,14 @@
 use crate::error::AppError;
-use sqlx::{Pool, Postgres, Row};
-use uuid::Uuid;
+use sqlx::{Pool, Postgres};
 
-/// Initialize the database schema.
+/// Initialize the database schema for Yjs document storage.
+///
+/// WHY: Two-table design optimizes for collaborative editing patterns:
+/// 1. yjs_updates: Append-only log of all edits (never modified after insert)
+/// 2. yjs_snapshots: Compacted state to prevent unbounded replay on load
 pub async fn init_schema(pool: &Pool<Postgres>) -> Result<(), AppError> {
-    // 1. The Append-Only Log
+    // 1. The Append-Only Update Log
+    // WHY: CRDT updates must be preserved in order for proper conflict resolution
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS yjs_updates (
@@ -18,6 +22,7 @@ pub async fn init_schema(pool: &Pool<Postgres>) -> Result<(), AppError> {
     .execute(pool)
     .await?;
 
+    // WHY: Index optimizes the common query pattern: load all updates for doc_id since snapshot
     sqlx::query(
         r#"
         CREATE INDEX IF NOT EXISTS idx_yjs_updates_rehydration ON yjs_updates (doc_id, id);
@@ -27,6 +32,8 @@ pub async fn init_schema(pool: &Pool<Postgres>) -> Result<(), AppError> {
     .await?;
 
     // 2. The Snapshot Store
+    // WHY: One snapshot per document (UPSERT pattern). Snapshots are full document state
+    // at a specific update ID, allowing fast rehydration without replaying all history.
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS yjs_snapshots (
@@ -34,6 +41,7 @@ pub async fn init_schema(pool: &Pool<Postgres>) -> Result<(), AppError> {
             name TEXT NOT NULL,
             snapshot_data BYTEA NOT NULL,
             last_update_id BIGINT NOT NULL,
+            tags TEXT[] NOT NULL DEFAULT '{}',
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
         "#,
@@ -42,112 +50,4 @@ pub async fn init_schema(pool: &Pool<Postgres>) -> Result<(), AppError> {
     .await?;
 
     Ok(())
-}
-
-/// Inserts a new update into the log.
-pub async fn append_update(
-    pool: &Pool<Postgres>,
-    doc_id: Uuid,
-    update: &[u8],
-) -> Result<i64, AppError> {
-    let row = sqlx::query(
-        r#"
-        INSERT INTO yjs_updates (doc_id, update_data)
-        VALUES ($1, $2)
-        RETURNING id
-        "#,
-    )
-    .bind(doc_id)
-    .bind(update)
-    .fetch_one(pool)
-    .await?;
-
-    Ok(row.get("id"))
-}
-
-/// Retrieves the latest snapshot and any subsequent updates.
-/// Returns (SnapshotName, SnapshotData, LastUpdateId, Vec<UpdateData>)
-pub async fn load_doc_state(
-    pool: &Pool<Postgres>,
-    doc_id: Uuid,
-) -> Result<(Option<String>, Option<Vec<u8>>, i64, Vec<Vec<u8>>), AppError> {
-    // 1. Get the latest snapshot
-    let snapshot_row = sqlx::query(
-        r#"
-        SELECT name, snapshot_data, last_update_id
-        FROM yjs_snapshots
-        WHERE doc_id = $1
-        "#,
-    )
-    .bind(doc_id)
-    .fetch_optional(pool)
-    .await?;
-
-    let (snapshot_name, snapshot_data, last_update_id) = if let Some(row) = snapshot_row {
-        (Some(row.get("name")), Some(row.get("snapshot_data")), row.get("last_update_id"))
-    } else {
-        (None, None, 0i64)
-    };
-
-    // 2. Get all updates that happened *after* the snapshot
-    let updates = sqlx::query(
-        r#"
-        SELECT update_data
-        FROM yjs_updates
-        WHERE doc_id = $1 AND id > $2
-        ORDER BY id ASC
-        "#,
-    )
-    .bind(doc_id)
-    .bind(last_update_id)
-    .fetch_all(pool)
-    .await?;
-
-    let update_data: Vec<Vec<u8>> = updates.into_iter().map(|row| row.get("update_data")).collect();
-
-    Ok((snapshot_name, snapshot_data, last_update_id, update_data))
-}
-
-/// Persists a compacted snapshot of the document.
-pub async fn upsert_snapshot(
-    pool: &Pool<Postgres>,
-    doc_id: Uuid,
-    name: &str,
-    snapshot: &[u8],
-    last_update_id: i64,
-) -> Result<(), AppError> {
-    sqlx::query(
-        r#"
-        INSERT INTO yjs_snapshots (doc_id, name, snapshot_data, last_update_id, created_at)
-        VALUES ($1, $2, $3, $4, NOW())
-        ON CONFLICT (doc_id) DO UPDATE
-        SET name = EXCLUDED.name,
-            snapshot_data = EXCLUDED.snapshot_data,
-            last_update_id = EXCLUDED.last_update_id,
-            created_at = EXCLUDED.created_at
-        "#,
-    )
-    .bind(doc_id)
-    .bind(name)
-    .bind(snapshot)
-    .bind(last_update_id)
-    .execute(pool)
-    .await?;
-
-    Ok(())
-}
-
-/// Get the max ID currently in the updates table for a doc.
-/// Useful for determining the 'last_update_id' when creating a snapshot.
-pub async fn get_last_update_id(pool: &Pool<Postgres>, doc_id: Uuid) -> Result<i64, AppError> {
-    let row = sqlx::query(
-        r#"
-        SELECT MAX(id) as max_id FROM yjs_updates WHERE doc_id = $1
-        "#,
-    )
-    .bind(doc_id)
-    .fetch_one(pool)
-    .await?;
-
-    Ok(row.get::<Option<i64>, _>("max_id").unwrap_or(0))
 }

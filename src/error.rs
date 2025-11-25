@@ -12,6 +12,16 @@ pub enum AppError {
 
     #[error("Environment variable error: {0}")]
     Env(#[from] std::env::VarError),
+
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("Address parse error: {0}")]
+    AddrParse(#[from] std::net::AddrParseError),
+
+    // Yrs observation failure indicates a critical logic error in document setup
+    #[error("Failed to observe document updates: {0}")]
+    YrsObserve(String),
 }
 
 impl IntoResponse for AppError {
@@ -28,6 +38,18 @@ impl IntoResponse for AppError {
             AppError::Env(e) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Env error: {}", e),
+            ),
+            AppError::Io(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("IO error: {}", e),
+            ),
+            AppError::AddrParse(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Address parse error: {}", e),
+            ),
+            AppError::YrsObserve(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Document observation error: {}", e),
             ),
         };
         (status, msg).into_response()
