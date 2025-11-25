@@ -20,7 +20,7 @@ use tracing::info;
 use uuid::Uuid;
 use yrs_axum::ws::{AxumSink, AxumStream};
 
-use crate::document::{AppState, get_or_create_doc};
+use crate::document::{ActiveDocument, AppState, get_or_create_doc};
 
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
@@ -59,7 +59,7 @@ async fn ws_handler(
     Ok(ws.on_upgrade(move |socket| peer(socket, doc, doc_id)))
 }
 
-async fn peer(ws: WebSocket, active_doc: Arc<document::ActiveDocument>, doc_id: Uuid) {
+async fn peer(ws: WebSocket, active_doc: Arc<ActiveDocument>, doc_id: Uuid) {
     info!("Peer connected to {}", doc_id);
 
     let (sink, stream) = ws.split();
