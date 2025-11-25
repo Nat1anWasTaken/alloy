@@ -29,12 +29,12 @@ async fn main() -> Result<(), AppError> {
     let state = Arc::new(AppState::new());
 
     let app = Router::new()
-        .route("/ws/:doc_id", get(ws_handler))
+        .route("/ws/{doc_id}", get(ws_handler))
         .with_state(state);
 
     let addr: SocketAddr = "0.0.0.0:3000".parse()?;
     let listener = TcpListener::bind(addr).await?;
-    info!("starting yrs-axum server on ws://{addr}/ws/:doc_id");
+    info!("starting yrs-axum server on ws://{addr}/ws/{{doc_id}}");
 
     axum::serve(listener, app).await?;
 
