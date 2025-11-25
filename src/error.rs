@@ -40,3 +40,66 @@ impl IntoResponse for AppError {
         (status, msg).into_response()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io;
+
+    #[test]
+    fn test_io_error_into_response() {
+        let io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
+        let app_err = AppError::Io(io_err);
+
+        let response = app_err.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn test_addr_parse_error_into_response() {
+        let parse_err = "not_an_ip:123".parse::<std::net::SocketAddr>();
+        assert!(parse_err.is_err());
+        let app_err = AppError::AddrParse(parse_err.unwrap_err());
+
+        let response = app_err.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn test_env_error_into_response() {
+        let env_err = std::env::var("NONEXISTENT_VAR_12345");
+        assert!(env_err.is_err());
+        let app_err = AppError::Env(env_err.unwrap_err());
+
+        let response = app_err.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn test_error_display_formatting() {
+        let io_err = io::Error::new(io::ErrorKind::NotFound, "test file");
+        let app_err = AppError::Io(io_err);
+
+        let display = format!("{}", app_err);
+        assert!(display.contains("IO error"));
+        assert!(display.contains("test file"));
+    }
+
+    #[test]
+    fn test_addr_parse_error_display() {
+        let parse_err = "invalid".parse::<std::net::SocketAddr>().unwrap_err();
+        let app_err = AppError::AddrParse(parse_err);
+
+        let display = format!("{}", app_err);
+        assert!(display.contains("Address parse error"));
+    }
+
+    #[test]
+    fn test_error_debug_output() {
+        let io_err = io::Error::new(io::ErrorKind::PermissionDenied, "access denied");
+        let app_err = AppError::Io(io_err);
+
+        let debug_output = format!("{:?}", app_err);
+        assert!(debug_output.contains("Io"));
+    }
+}

@@ -93,6 +93,7 @@ pub async fn get_or_create_doc(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use yrs::types::Text;
 
     #[tokio::test]
     async fn test_document_cleanup() {
@@ -108,8 +109,120 @@ mod tests {
         // The map entry remains but should be weak/dead.
         assert_eq!(state.docs.read().await.len(), 1);
         assert!(state.docs.read().await.get(&id).unwrap().upgrade().is_none());
-        
+
         // Re-create
+        let _doc2 = get_or_create_doc(state.clone(), id).await.unwrap();
+        assert!(state.docs.read().await.get(&id).unwrap().upgrade().is_some());
+    }
+
+    #[test]
+    fn test_app_state_new() {
+        let state = AppState::new();
+        let docs = state.docs.blocking_read();
+        assert_eq!(docs.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_or_create_doc_creates_new() {
+        let state = Arc::new(AppState::new());
+        let doc_id = Uuid::new_v4();
+
+        let doc = get_or_create_doc(state.clone(), doc_id).await.unwrap();
+
+        assert_eq!(doc.id, doc_id);
+        assert_eq!(state.docs.read().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_get_or_create_doc_retrieves_existing() {
+        let state = Arc::new(AppState::new());
+        let doc_id = Uuid::new_v4();
+
+        let doc1 = get_or_create_doc(state.clone(), doc_id).await.unwrap();
+        let doc2 = get_or_create_doc(state.clone(), doc_id).await.unwrap();
+
+        // Verify same Arc instance (pointer equality)
+        assert!(Arc::ptr_eq(&doc1, &doc2));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_get_or_create_doc_concurrent_creation() {
+        let state = Arc::new(AppState::new());
+        let doc_id = Uuid::new_v4();
+
+        // Spawn 100 tasks simultaneously trying to create same doc
+        let mut handles = Vec::new();
+        for _ in 0..100 {
+            let state = state.clone();
+            let handle = tokio::spawn(async move {
+                get_or_create_doc(state, doc_id).await.unwrap()
+            });
+            handles.push(handle);
+        }
+
+        let docs: Vec<_> = futures_util::future::join_all(handles)
+            .await
+            .into_iter()
+            .map(|r| r.unwrap())
+            .collect();
+
+        // Verify all tasks got the SAME Arc instance
+        for i in 1..docs.len() {
+            assert!(Arc::ptr_eq(&docs[0], &docs[i]));
+        }
+
+        // Verify only ONE document in state
+        assert_eq!(state.docs.read().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_save_document_snapshot_with_content() {
+        let doc = Doc::new();
+        let text = doc.get_or_insert_text("content");
+        {
+            let mut txn = doc.transact_mut();
+            text.insert(&mut txn, 0, "test");
+        }
+
+        let result = save_document_snapshot(Uuid::new_v4(), &doc).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_save_document_snapshot_empty_doc() {
+        let doc = Doc::new();
+        let result = save_document_snapshot(Uuid::new_v4(), &doc).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_multiple_documents_in_state() {
+        let state = Arc::new(AppState::new());
+
+        let id1 = Uuid::new_v4();
+        let id2 = Uuid::new_v4();
+        let id3 = Uuid::new_v4();
+
+        let _doc1 = get_or_create_doc(state.clone(), id1).await.unwrap();
+        let _doc2 = get_or_create_doc(state.clone(), id2).await.unwrap();
+        let _doc3 = get_or_create_doc(state.clone(), id3).await.unwrap();
+
+        assert_eq!(state.docs.read().await.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_document_recreation_after_drop() {
+        let state = Arc::new(AppState::new());
+        let id = Uuid::new_v4();
+
+        {
+            let _doc = get_or_create_doc(state.clone(), id).await.unwrap();
+        } // Drop all strong references
+
+        // Weak reference exists but can't upgrade
+        assert!(state.docs.read().await.get(&id).unwrap().upgrade().is_none());
+
+        // Create new doc with same ID - should work
         let _doc2 = get_or_create_doc(state.clone(), id).await.unwrap();
         assert!(state.docs.read().await.get(&id).unwrap().upgrade().is_some());
     }

@@ -1,6 +1,5 @@
-mod document;
-mod error;
-
+use alloy::document::{ActiveDocument, AppState, get_or_create_doc};
+use alloy::error::AppError;
 use axum::{
     Router,
     extract::{
@@ -10,7 +9,6 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-use error::AppError;
 use futures_util::StreamExt;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -20,8 +18,6 @@ use tower_http::trace::{TraceLayer, DefaultOnRequest, DefaultOnResponse};
 use tracing::{info, Level};
 use uuid::Uuid;
 use yrs_axum::ws::{AxumSink, AxumStream};
-
-use crate::document::{ActiveDocument, AppState, get_or_create_doc};
 
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
