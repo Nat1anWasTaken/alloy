@@ -4,8 +4,7 @@ use std::sync::{Arc, Weak};
 use tokio::sync::RwLock;
 
 use crate::document::ActiveDocument;
-use crate::persistence::{DocumentId, SharedStore};
-use crate::recorder::RecorderConfig;
+use crate::persistence::{DocumentId, RecorderConfig, SharedStore};
 
 pub struct AppState {
     pub docs: RwLock<HashMap<DocumentId, Weak<ActiveDocument>>>,

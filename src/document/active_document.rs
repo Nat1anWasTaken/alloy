@@ -5,8 +5,7 @@ use tokio::sync::Mutex;
 use yrs::Doc;
 use yrs_axum::broadcast::BroadcastGroup;
 
-use crate::persistence::DocumentId;
-use crate::recorder::RecorderHandle;
+use crate::persistence::{DocumentId, RecorderHandle};
 
 pub struct ActiveDocument {
     pub id: DocumentId,

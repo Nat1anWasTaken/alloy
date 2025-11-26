@@ -8,8 +8,7 @@ use yrs_axum::broadcast::BroadcastGroup;
 
 use crate::app_state::AppState;
 use crate::error::AppError;
-use crate::persistence::{DocumentId, SharedStore};
-use crate::recorder::spawn_recorder;
+use crate::persistence::{DocumentId, SharedStore, spawn_recorder};
 
 use super::active_document::ActiveDocument;
 
