@@ -15,7 +15,6 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tower_http::trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::{Level, info};
-use uuid::Uuid;
 
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
@@ -54,11 +53,10 @@ fn setup_tracing() {
 
 async fn ws_handler(
     ws: WebSocketUpgrade,
-    Path(doc_id): Path<Uuid>,
+    Path(doc_id): Path<DocumentId>,
     Query(params): Query<WsParams>,
     State(state): State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, AppError> {
-    let doc_id = DocumentId(doc_id);
     let user = UserId(params.user.unwrap_or_else(|| "anonymous".to_string()));
     let doc = get_or_create_doc(state.clone(), doc_id).await?;
     Ok(ws.on_upgrade(move |socket| peer(socket, doc, doc_id, state, user)))

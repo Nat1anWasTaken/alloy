@@ -2,6 +2,8 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use thiserror::Error;
 
+use crate::persistence::IdError;
+
 #[derive(Debug, Error)]
 pub enum AppError {
     #[error("Yrs decode error: {0}")]
@@ -18,6 +20,9 @@ pub enum AppError {
 
     #[error("Store error: {0}")]
     Store(String),
+
+    #[error("Id error: {0}")]
+    Id(#[from] IdError),
 }
 
 impl IntoResponse for AppError {
@@ -40,6 +45,10 @@ impl IntoResponse for AppError {
                 format!("Address parse error: {}", e),
             ),
             AppError::Store(e) => (StatusCode::INTERNAL_SERVER_ERROR, e),
+            AppError::Id(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Id generation error: {}", e),
+            ),
         };
         (status, msg).into_response()
     }
