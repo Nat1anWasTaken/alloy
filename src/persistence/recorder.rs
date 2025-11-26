@@ -205,13 +205,12 @@ async fn maybe_snapshot(
             last_seq,
         )
         .await?;
-    store.cleanup_updates_until(doc_id, last_seq).await?;
 
     {
         let mut guard = state.write().await;
         guard.last_snapshot_seq = last_seq;
     }
     *pending_bytes = 0;
-    tracing::debug!(doc=%doc_id.0, base_seq=last_seq, "recorder snapshot stored and WAL cleaned");
+    tracing::debug!(doc=%doc_id.0, base_seq=last_seq, "recorder snapshot stored");
     Ok(())
 }

@@ -114,26 +114,6 @@ impl DocumentStore for MemoryStore {
         Ok(())
     }
 
-    #[instrument(skip(self), fields(doc = ?doc, up_to_seq))]
-    async fn cleanup_updates_until(&self, doc: DocumentId, up_to_seq: i64) -> Result<(), AppError> {
-        trace!("Cleaning up updates");
-        let mut state = self.inner.write().await;
-        if let Some(existing) = state.updates.get_mut(&doc) {
-            let before_count = existing.len();
-            existing.retain(|u| u.seq > up_to_seq);
-            let after_count = existing.len();
-            let removed_count = before_count - after_count;
-
-            debug!(
-                before_count,
-                after_count, removed_count, "Updates cleaned up"
-            );
-        } else {
-            debug!("No updates found to clean up");
-        }
-        Ok(())
-    }
-
     #[instrument(skip(self), fields(doc = ?doc, client = ?client, user = ?user))]
     async fn record_session(
         &self,
