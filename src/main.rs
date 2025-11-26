@@ -1,4 +1,5 @@
-use alloy::document::{AppState, get_or_create_doc, peer};
+use alloy::app_state::AppState;
+use alloy::document::{get_or_create_doc, peer};
 use alloy::error::AppError;
 use alloy::persistence::{DocumentId, MemoryStore, UserId};
 use axum::extract::ws::WebSocketUpgrade;
