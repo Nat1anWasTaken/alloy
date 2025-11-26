@@ -1,5 +1,5 @@
 use alloy::document::{AppState, get_or_create_doc, peer};
-use alloy::persistence::{DocumentId, MemoryStore, UserId};
+use alloy::persistence::{DocumentId, IdError, MemoryStore, UserId};
 use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{Path, State};
 use axum::response::IntoResponse;
@@ -9,7 +9,6 @@ use std::sync::Arc;
 use thiserror::Error;
 use tokio::net::TcpListener;
 use tokio_tungstenite::{WebSocketStream, connect_async};
-use uuid::Uuid;
 use yrs::{Doc, GetString, ReadTxn, StateVector, Text, Transact};
 
 #[derive(Debug, Error)]
@@ -22,10 +21,12 @@ pub enum TestError {
     App(#[from] alloy::error::AppError),
     #[allow(dead_code)]
     #[error("document {0} missing from state")]
-    MissingDocument(Uuid),
+    MissingDocument(DocumentId),
     #[allow(dead_code)]
     #[error("connection succeeded unexpectedly")]
     UnexpectedConnection,
+    #[error("id generation failed: {0}")]
+    Id(#[from] IdError),
 }
 
 impl From<tokio_tungstenite::tungstenite::Error> for TestError {
@@ -68,10 +69,9 @@ fn create_test_router(state: Arc<AppState>) -> Router {
 /// WebSocket handler for tests (mirrors main.rs implementation)
 async fn test_ws_handler(
     ws: WebSocketUpgrade,
-    Path(doc_id): Path<Uuid>,
+    Path(doc_id): Path<DocumentId>,
     State(state): State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, alloy::error::AppError> {
-    let doc_id = DocumentId(doc_id);
     let doc = get_or_create_doc(state.clone(), doc_id).await?;
     let user = UserId("test".to_string());
     Ok(ws.on_upgrade(move |socket| peer(socket, doc, doc_id, state, user)))
@@ -80,7 +80,7 @@ async fn test_ws_handler(
 /// Connect to a document and return the WebSocket stream
 pub async fn connect_to_doc(
     addr: SocketAddr,
-    doc_id: Uuid,
+    doc_id: DocumentId,
 ) -> TestResult<WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>> {
     let url = format!("ws://{}/ws/{}", addr, doc_id);
     let (ws_stream, _response) = connect_async(&url).await?;

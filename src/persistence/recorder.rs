@@ -89,14 +89,14 @@ pub fn spawn_recorder(
         loop {
             select! {
                 _ = &mut shutdown_rx => {
-                    tracing::info!(doc=%doc_id.0, "recorder shutdown requested; draining queue");
+                    tracing::info!(doc=%doc_id, "recorder shutdown requested; draining queue");
                     drain_queue(&mut rx, &store, doc_id, &mut pending_bytes, &state).await?;
                     maybe_snapshot(&doc, doc_id, &store, &state, &mut pending_bytes).await?;
-                    tracing::info!(doc=%doc_id.0, "recorder shutdown completed");
+                    tracing::info!(doc=%doc_id, "recorder shutdown completed");
                     break;
                 }
                 _ = ticker.tick() => {
-                    tracing::trace!(doc=%doc_id.0, "recorder ticker fired; draining and snapshotting if needed");
+                    tracing::trace!(doc=%doc_id, "recorder ticker fired; draining and snapshotting if needed");
                     drain_queue(&mut rx, &store, doc_id, &mut pending_bytes, &state).await?;
                     maybe_snapshot(&doc, doc_id, &store, &state, &mut pending_bytes).await?;
                 }
@@ -106,14 +106,14 @@ pub fn spawn_recorder(
                     }
 
                     if pending_bytes >= config.max_bytes_since_snapshot {
-                        tracing::trace!(doc=%doc_id.0, pending_bytes, "snapshot threshold reached; draining and snapshotting");
+                        tracing::trace!(doc=%doc_id, pending_bytes, "snapshot threshold reached; draining and snapshotting");
                         drain_queue(&mut rx, &store, doc_id, &mut pending_bytes, &state).await?;
                         maybe_snapshot(&doc, doc_id, &store, &state, &mut pending_bytes).await?;
                     }
                 }
                 else => {
                     // channel closed unexpectedly: still try to snapshot if needed
-                    tracing::warn!(doc=%doc_id.0, "recorder channel closed unexpectedly; attempting final snapshot");
+                    tracing::warn!(doc=%doc_id, "recorder channel closed unexpectedly; attempting final snapshot");
                     maybe_snapshot(&doc, doc_id, &store, &state, &mut pending_bytes).await?;
                     break;
                 }
@@ -170,7 +170,7 @@ async fn drain_queue(
         drained += 1;
     }
     if drained > 0 {
-        tracing::trace!(doc=%doc_id.0, drained, pending_bytes, "recorder drained queued updates");
+        tracing::trace!(doc=%doc_id, drained, pending_bytes, "recorder drained queued updates");
     }
     Ok(())
 }
@@ -196,7 +196,7 @@ async fn maybe_snapshot(
         txn.encode_state_as_update_v1(&StateVector::default())
     };
 
-    tracing::trace!(doc=%doc_id.0, base_seq=last_seq, snapshot_size=snapshot.len(), "recorder storing snapshot");
+    tracing::trace!(doc=%doc_id, base_seq=last_seq, snapshot_size=snapshot.len(), "recorder storing snapshot");
     store
         .store_snapshot(
             doc_id,
@@ -212,6 +212,6 @@ async fn maybe_snapshot(
         guard.last_snapshot_seq = last_seq;
     }
     *pending_bytes = 0;
-    tracing::debug!(doc=%doc_id.0, base_seq=last_seq, "recorder snapshot stored and WAL cleaned");
+    tracing::debug!(doc=%doc_id, base_seq=last_seq, "recorder snapshot stored and WAL cleaned");
     Ok(())
 }

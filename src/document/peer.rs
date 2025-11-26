@@ -20,7 +20,7 @@ pub async fn peer(
     state: Arc<AppState>,
     user: UserId,
 ) {
-    info!("peer connected to {}", doc_id.0);
+    info!("peer connected to {}", doc_id);
     active_doc.peer_connected();
 
     let (sink, stream) = ws.split();
@@ -28,21 +28,21 @@ pub async fn peer(
     let stream = AxumStream::from(stream);
 
     let protocol = SessionProtocol::new(doc_id, user, state.store.clone());
-    tracing::trace!(doc=%doc_id.0, "subscribing peer to broadcast group");
+    tracing::trace!(doc=%doc_id, "subscribing peer to broadcast group");
     let sub = active_doc
         .bcast
         .subscribe_with(sink.clone(), stream, protocol);
 
     match sub.completed().await {
-        Ok(_) => info!("peer finished for {}", doc_id.0),
-        Err(err) => warn!("peer aborted for {}: {}", doc_id.0, err),
+        Ok(_) => info!("peer finished for {}", doc_id),
+        Err(err) => warn!("peer aborted for {}: {}", doc_id, err),
     }
 
     let remaining = active_doc.peer_disconnected();
-    tracing::debug!(doc=%doc_id.0, remaining_peers=remaining.saturating_sub(1), "peer disconnected");
+    tracing::debug!(doc=%doc_id, remaining_peers=remaining.saturating_sub(1), "peer disconnected");
     if remaining == 1
         && let Err(e) = close_document(state.clone(), doc_id).await
     {
-        warn!("failed to close document {}: {}", doc_id.0, e);
+        warn!("failed to close document {}: {}", doc_id, e);
     }
 }
