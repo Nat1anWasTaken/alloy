@@ -20,7 +20,7 @@ pub enum TestError {
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
     #[error("websocket: {0}")]
-    WebSocket(#[from] tokio_tungstenite::tungstenite::Error),
+    WebSocket(Box<tokio_tungstenite::tungstenite::Error>),
     #[error("app: {0}")]
     App(#[from] alloy::error::AppError),
     #[allow(dead_code)]
@@ -29,6 +29,12 @@ pub enum TestError {
     #[allow(dead_code)]
     #[error("connection succeeded unexpectedly")]
     UnexpectedConnection,
+}
+
+impl From<tokio_tungstenite::tungstenite::Error> for TestError {
+    fn from(err: tokio_tungstenite::tungstenite::Error) -> Self {
+        TestError::WebSocket(Box::new(err))
+    }
 }
 
 pub type TestResult<T> = Result<T, TestError>;

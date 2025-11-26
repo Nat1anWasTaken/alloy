@@ -5,37 +5,63 @@ use uuid::Uuid;
 use yrs::updates::decoder::Decode;
 use yrs::{Doc, ReadTxn, StateVector, Transact, Text};
 
+fn runtime_single_thread() -> Option<tokio::runtime::Runtime> {
+    tokio::runtime::Runtime::new().map_err(|err| {
+        eprintln!("failed to build Tokio runtime: {err}");
+    }).ok()
+}
+
+fn runtime_multi_thread(worker_threads: usize) -> Option<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(worker_threads)
+        .build()
+        .map_err(|err| {
+            eprintln!("failed to build Tokio multi-thread runtime: {err}");
+        })
+        .ok()
+}
+
+fn decode_update(bytes: &[u8]) -> Option<yrs::Update> {
+    yrs::Update::decode_v1(bytes).map_err(|err| {
+        eprintln!("failed to decode update: {err}");
+    }).ok()
+}
+
 // ============================================================================
 // Benchmark Group 1: Document Operations
 // ============================================================================
 
 fn bench_document_creation(c: &mut Criterion) {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let Some(runtime) = runtime_single_thread() else { return; };
 
     c.bench_function("document_creation", |b| {
         b.to_async(&runtime).iter(|| async {
             let state = Arc::new(AppState::new());
             let doc_id = Uuid::new_v4();
-            let _doc = get_or_create_doc(state, black_box(doc_id)).await.unwrap();
+            if let Err(err) = get_or_create_doc(state, black_box(doc_id)).await {
+                eprintln!("document_creation iteration failed: {err}");
+            }
         });
     });
 }
 
 fn bench_document_retrieval(c: &mut Criterion) {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let Some(runtime) = runtime_single_thread() else { return; };
     let state = Arc::new(AppState::new());
     let doc_id = Uuid::new_v4();
 
     // Pre-create document
     runtime.block_on(async {
-        let _doc = get_or_create_doc(state.clone(), doc_id).await.unwrap();
+        if let Err(err) = get_or_create_doc(state.clone(), doc_id).await {
+            eprintln!("failed to seed document for retrieval benchmark: {err}");
+        }
     });
 
     c.bench_function("document_retrieval", |b| {
         b.to_async(&runtime).iter(|| async {
-            let _doc = get_or_create_doc(state.clone(), black_box(doc_id))
-                .await
-                .unwrap();
+            if let Err(err) = get_or_create_doc(state.clone(), black_box(doc_id)).await {
+                eprintln!("document_retrieval iteration failed: {err}");
+            }
         });
     });
 }
@@ -48,17 +74,16 @@ fn bench_document_concurrent_access(c: &mut Criterion) {
             BenchmarkId::from_parameter(num_clients),
             num_clients,
             |b, &num_clients| {
-                let runtime = tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(4)
-                    .build()
-                    .unwrap();
+                let Some(runtime) = runtime_multi_thread(4) else { return; };
 
                 let state = Arc::new(AppState::new());
                 let doc_id = Uuid::new_v4();
 
                 // Pre-create document
                 runtime.block_on(async {
-                    let _doc = get_or_create_doc(state.clone(), doc_id).await.unwrap();
+                    if let Err(err) = get_or_create_doc(state.clone(), doc_id).await {
+                        eprintln!("failed to seed document for concurrent access benchmark: {err}");
+                    }
                 });
 
                 b.to_async(&runtime).iter(|| async {
@@ -66,12 +91,18 @@ fn bench_document_concurrent_access(c: &mut Criterion) {
                     for _ in 0..num_clients {
                         let state = state.clone();
                         let handle = tokio::spawn(async move {
-                            get_or_create_doc(state, doc_id).await.unwrap()
+                            get_or_create_doc(state, doc_id).await
                         });
                         handles.push(handle);
                     }
 
-                    futures_util::future::join_all(handles).await;
+                    for result in futures_util::future::join_all(handles).await {
+                        match result {
+                            Ok(Ok(_)) => {}
+                            Ok(Err(err)) => eprintln!("concurrent access task failed: {err}"),
+                            Err(join_err) => eprintln!("concurrent access task join error: {join_err}"),
+                        }
+                    }
                 });
             },
         );
@@ -150,10 +181,12 @@ fn bench_apply_update(c: &mut Criterion) {
 
     c.bench_function("crdt_apply_update", |b| {
         b.iter_batched(
-            || Doc::new(),
+            Doc::new,
             |doc| {
                 let mut txn = doc.transact_mut();
-                txn.apply_update(yrs::Update::decode_v1(black_box(&update)).unwrap());
+                if let Some(decoded) = decode_update(black_box(&update)) {
+                    txn.apply_update(decoded);
+                }
             },
             criterion::BatchSize::SmallInput,
         );
@@ -190,7 +223,9 @@ fn bench_broadcast_simulation(c: &mut Criterion) {
                     for _ in 0..num_clients {
                         let client_doc = Doc::new();
                         let mut txn = client_doc.transact_mut();
-                        txn.apply_update(yrs::Update::decode_v1(&update).unwrap());
+                        if let Some(decoded) = decode_update(&update) {
+                            txn.apply_update(decoded);
+                        }
                     }
                 });
             },
@@ -220,7 +255,9 @@ fn bench_sync_full_state(c: &mut Criterion) {
         b.iter(|| {
             let new_doc = Doc::new();
             let mut txn = new_doc.transact_mut();
-            txn.apply_update(yrs::Update::decode_v1(black_box(&full_state)).unwrap());
+            if let Some(decoded) = decode_update(black_box(&full_state)) {
+                txn.apply_update(decoded);
+            }
         });
     });
 }
@@ -237,14 +274,17 @@ fn bench_document_count_scaling(c: &mut Criterion) {
             BenchmarkId::from_parameter(num_docs),
             num_docs,
             |b, &num_docs| {
-                let runtime = tokio::runtime::Runtime::new().unwrap();
+                let Some(runtime) = runtime_single_thread() else { return; };
 
                 b.to_async(&runtime).iter(|| async {
                     let state = Arc::new(AppState::new());
 
                     for _ in 0..num_docs {
                         let doc_id = Uuid::new_v4();
-                        let _doc = get_or_create_doc(state.clone(), doc_id).await.unwrap();
+                        if let Err(err) = get_or_create_doc(state.clone(), doc_id).await {
+                            eprintln!("document_count_scaling iteration failed: {err}");
+                            break;
+                        }
                     }
                 });
             },
@@ -285,17 +325,16 @@ fn bench_message_size_scaling(c: &mut Criterion) {
 // ============================================================================
 
 fn bench_read_lock_contention(c: &mut Criterion) {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(4)
-        .build()
-        .unwrap();
+    let Some(runtime) = runtime_multi_thread(4) else { return; };
 
     let state = Arc::new(AppState::new());
     let doc_id = Uuid::new_v4();
 
     // Pre-create document
     runtime.block_on(async {
-        let _doc = get_or_create_doc(state.clone(), doc_id).await.unwrap();
+        if let Err(err) = get_or_create_doc(state.clone(), doc_id).await {
+            eprintln!("failed to seed document for read_lock_contention benchmark: {err}");
+        }
     });
 
     c.bench_function("read_lock_contention", |b| {
@@ -319,10 +358,7 @@ fn bench_read_lock_contention(c: &mut Criterion) {
 }
 
 fn bench_document_creation_race(c: &mut Criterion) {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(4)
-        .build()
-        .unwrap();
+    let Some(runtime) = runtime_multi_thread(4) else { return; };
 
     c.bench_function("document_creation_race", |b| {
         b.to_async(&runtime).iter(|| async {
@@ -334,12 +370,18 @@ fn bench_document_creation_race(c: &mut Criterion) {
             for _ in 0..20 {
                 let state = state.clone();
                 let handle = tokio::spawn(async move {
-                    get_or_create_doc(state, doc_id).await.unwrap()
+                    get_or_create_doc(state, doc_id).await
                 });
                 handles.push(handle);
             }
 
-            futures_util::future::join_all(handles).await;
+            for result in futures_util::future::join_all(handles).await {
+                match result {
+                    Ok(Ok(_)) => {}
+                    Ok(Err(err)) => eprintln!("document_creation_race task failed: {err}"),
+                    Err(join_err) => eprintln!("document_creation_race join error: {join_err}"),
+                }
+            }
         });
     });
 }

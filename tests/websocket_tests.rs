@@ -30,7 +30,7 @@ async fn test_connection_with_valid_uuid() -> TestResult<()> {
 
     match result {
         Ok(Ok(_)) => Ok(()),
-        Ok(Err(err)) => Err(err.into()),
+        Ok(Err(err)) => Err(err),
         Err(_) => Err(TestError::Io(std::io::Error::new(
             std::io::ErrorKind::TimedOut,
             "connect_to_doc timed out",

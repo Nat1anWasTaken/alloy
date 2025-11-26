@@ -100,7 +100,7 @@ async fn test_concurrent_insertions_converge() -> TestResult<()> {
 
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    let updates = vec![
+    let updates = [
         common::create_yrs_update("Client1 "),
         common::create_yrs_update("Client2 "),
         common::create_yrs_update("Client3 "),

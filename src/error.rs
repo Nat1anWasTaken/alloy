@@ -59,7 +59,11 @@ mod tests {
     fn test_addr_parse_error_into_response() {
         let parse_err = "not_an_ip:123".parse::<std::net::SocketAddr>();
         assert!(parse_err.is_err());
-        let app_err = AppError::AddrParse(parse_err.unwrap_err());
+        let err = match parse_err {
+            Ok(_) => return,
+            Err(err) => err,
+        };
+        let app_err = AppError::AddrParse(err);
 
         let response = app_err.into_response();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
@@ -69,7 +73,11 @@ mod tests {
     fn test_env_error_into_response() {
         let env_err = std::env::var("NONEXISTENT_VAR_12345");
         assert!(env_err.is_err());
-        let app_err = AppError::Env(env_err.unwrap_err());
+        let err = match env_err {
+            Ok(_) => return,
+            Err(err) => err,
+        };
+        let app_err = AppError::Env(err);
 
         let response = app_err.into_response();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
@@ -87,8 +95,12 @@ mod tests {
 
     #[test]
     fn test_addr_parse_error_display() {
-        let parse_err = "invalid".parse::<std::net::SocketAddr>().unwrap_err();
-        let app_err = AppError::AddrParse(parse_err);
+        let parse_err = "invalid".parse::<std::net::SocketAddr>();
+        assert!(parse_err.is_err());
+        let app_err = match parse_err {
+            Ok(_) => return,
+            Err(err) => AppError::AddrParse(err),
+        };
 
         let display = format!("{}", app_err);
         assert!(display.contains("Address parse error"));
