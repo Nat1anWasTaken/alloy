@@ -31,8 +31,6 @@ pub trait DocumentStore: Send + Sync {
         base_seq: i64,
     ) -> Result<(), AppError>;
 
-    async fn cleanup_updates_until(&self, doc: DocumentId, up_to_seq: i64) -> Result<(), AppError>;
-
     async fn record_session(
         &self,
         doc: DocumentId,
