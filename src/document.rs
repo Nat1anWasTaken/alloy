@@ -176,20 +176,7 @@ impl SessionProtocol {
         }
     }
 
-    fn validate_update(&self, update: &Update) -> Result<(), yrs::sync::Error> {
-        let sv = update.state_vector();
-        let mut iter = sv.iter();
-        let client = match iter.next() {
-            Some((client, _)) => *client,
-            None => return Ok(()),
-        };
-
-        if iter.any(|(other, _)| *other != client) {
-            return Err(yrs::sync::Error::PermissionDenied {
-                reason: "mixed client ids in update".to_string(),
-            });
-        }
-
+    fn ensure_expected_client(&self, client: u64) -> Result<(), yrs::sync::Error> {
         if let Some(expected) = self.expected.get() {
             if expected.0 != client {
                 return Err(yrs::sync::Error::PermissionDenied {
@@ -209,6 +196,41 @@ impl SessionProtocol {
         }
 
         Ok(())
+    }
+
+    fn validate_update(&self, update: &Update) -> Result<(), yrs::sync::Error> {
+        let sv = update.state_vector();
+        let mut iter = sv.iter();
+        let client = match iter.next() {
+            Some((client, _)) => *client,
+            None => return Ok(()),
+        };
+
+        if iter.any(|(other, _)| *other != client) {
+            return Err(yrs::sync::Error::PermissionDenied {
+                reason: "mixed client ids in update".to_string(),
+            });
+        }
+        self.ensure_expected_client(client)
+    }
+
+    fn validate_awareness_update(
+        &self,
+        update: &yrs::sync::awareness::AwarenessUpdate,
+    ) -> Result<(), yrs::sync::Error> {
+        let mut iter = update.clients.keys();
+        let client = match iter.next() {
+            Some(client) => *client,
+            None => return Ok(()),
+        };
+
+        if iter.any(|other| *other != client) {
+            return Err(yrs::sync::Error::PermissionDenied {
+                reason: "mixed client ids in awareness update".to_string(),
+            });
+        }
+
+        self.ensure_expected_client(client)
     }
 }
 
@@ -267,6 +289,7 @@ impl Protocol for SessionProtocol {
         awareness: &mut Awareness,
         update: yrs::sync::awareness::AwarenessUpdate,
     ) -> Result<Option<Message>, yrs::sync::Error> {
+        self.validate_awareness_update(&update)?;
         self.inner.handle_awareness_update(awareness, update)
     }
 
