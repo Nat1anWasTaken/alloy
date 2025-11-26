@@ -1,15 +1,15 @@
+use alloy::persistence::DocumentId;
 use common::{TestError, TestResult};
 use futures_util::StreamExt;
 use std::time::Duration;
 use tokio_tungstenite::tungstenite::protocol::{CloseFrame, frame::coding::CloseCode};
-use uuid::Uuid;
 
 mod common;
 
 #[tokio::test]
 async fn test_websocket_connection_success() -> TestResult<()> {
     let (addr, _state) = common::spawn_test_server().await?;
-    let doc_id = Uuid::new_v4();
+    let doc_id = DocumentId::new();
 
     let mut ws = common::connect_to_doc(addr, doc_id).await?;
 
@@ -19,12 +19,12 @@ async fn test_websocket_connection_success() -> TestResult<()> {
 }
 
 #[tokio::test]
-async fn test_connection_with_valid_uuid() -> TestResult<()> {
+async fn test_connection_with_valid_id() -> TestResult<()> {
     let (addr, _state) = common::spawn_test_server().await?;
-    let uuid = Uuid::new_v4();
+    let doc_id = DocumentId::new();
 
     let result =
-        tokio::time::timeout(Duration::from_secs(5), common::connect_to_doc(addr, uuid)).await;
+        tokio::time::timeout(Duration::from_secs(5), common::connect_to_doc(addr, doc_id)).await;
 
     match result {
         Ok(Ok(_)) => Ok(()),
@@ -37,10 +37,10 @@ async fn test_connection_with_valid_uuid() -> TestResult<()> {
 }
 
 #[tokio::test]
-async fn test_connection_with_invalid_uuid_path() -> TestResult<()> {
+async fn test_connection_with_invalid_id_path() -> TestResult<()> {
     let (addr, _state) = common::spawn_test_server().await?;
 
-    let url = format!("ws://{}/ws/not-a-valid-uuid", addr);
+    let url = format!("ws://{}/ws/not-a-valid-id", addr);
     let result = tokio_tungstenite::connect_async(&url).await;
 
     if result.is_err() {
@@ -61,7 +61,7 @@ async fn test_connection_with_invalid_uuid_path() -> TestResult<()> {
 #[tokio::test]
 async fn test_multiple_connections_same_document() -> TestResult<()> {
     let (addr, state) = common::spawn_test_server().await?;
-    let doc_id = Uuid::new_v4();
+    let doc_id = DocumentId::new();
 
     let ws1 = common::connect_to_doc(addr, doc_id).await?;
     let ws2 = common::connect_to_doc(addr, doc_id).await?;
@@ -87,9 +87,9 @@ async fn test_multiple_connections_same_document() -> TestResult<()> {
 async fn test_multiple_connections_different_documents() -> TestResult<()> {
     let (addr, state) = common::spawn_test_server().await?;
 
-    let doc_id1 = Uuid::new_v4();
-    let doc_id2 = Uuid::new_v4();
-    let doc_id3 = Uuid::new_v4();
+    let doc_id1 = DocumentId::new();
+    let doc_id2 = DocumentId::new();
+    let doc_id3 = DocumentId::new();
 
     let ws1 = common::connect_to_doc(addr, doc_id1).await?;
     let ws2 = common::connect_to_doc(addr, doc_id2).await?;
@@ -122,7 +122,7 @@ async fn test_multiple_connections_different_documents() -> TestResult<()> {
 #[tokio::test]
 async fn test_connection_cleanup_on_disconnect() -> TestResult<()> {
     let (addr, state) = common::spawn_test_server().await?;
-    let doc_id = Uuid::new_v4();
+    let doc_id = DocumentId::new();
 
     {
         let mut ws = common::connect_to_doc(addr, doc_id).await?;
@@ -153,7 +153,7 @@ async fn test_connection_cleanup_on_disconnect() -> TestResult<()> {
 #[tokio::test]
 async fn test_sync_message_on_connection() -> TestResult<()> {
     let (addr, _state) = common::spawn_test_server().await?;
-    let doc_id = Uuid::new_v4();
+    let doc_id = DocumentId::new();
 
     let ws = common::connect_to_doc(addr, doc_id).await?;
 
@@ -167,7 +167,7 @@ async fn test_sync_message_on_connection() -> TestResult<()> {
 #[tokio::test]
 async fn test_graceful_shutdown() -> TestResult<()> {
     let (addr, _state) = common::spawn_test_server().await?;
-    let doc_id = Uuid::new_v4();
+    let doc_id = DocumentId::new();
 
     let mut ws1 = common::connect_to_doc(addr, doc_id).await?;
     let mut ws2 = common::connect_to_doc(addr, doc_id).await?;

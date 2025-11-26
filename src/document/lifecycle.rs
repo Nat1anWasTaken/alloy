@@ -31,7 +31,7 @@ pub async fn get_or_create_doc(
         return Ok(doc);
     }
 
-    info!("creating in-memory document {}", doc_id.0);
+    info!("creating in-memory document {}", doc_id);
 
     let doc = Doc::new();
     let last_seq = load_from_store(&doc, doc_id, state.store.clone()).await?;
@@ -106,8 +106,6 @@ pub async fn close_document(state: Arc<AppState>, doc_id: DocumentId) -> Result<
 mod tests {
     use std::sync::Arc;
 
-    use uuid::Uuid;
-
     use super::get_or_create_doc;
     use crate::app_state::AppState;
     use crate::document::lifecycle::close_document;
@@ -119,7 +117,7 @@ mod tests {
     #[tokio::test]
     async fn get_or_create_inserts_document() -> TestResult<()> {
         let state = Arc::new(AppState::default());
-        let id = DocumentId(Uuid::new_v4());
+        let id = DocumentId::new();
         let doc = get_or_create_doc(state.clone(), id).await?;
         assert_eq!(doc.id, id);
         assert!(
@@ -137,7 +135,7 @@ mod tests {
     #[tokio::test]
     async fn close_document_removes_from_state() -> TestResult<()> {
         let state = Arc::new(AppState::default());
-        let id = DocumentId(Uuid::new_v4());
+        let id = DocumentId::new();
         let _ = get_or_create_doc(state.clone(), id).await?;
 
         close_document(state.clone(), id).await?;

@@ -2,7 +2,6 @@ use alloy::document::{AppState, get_or_create_doc};
 use alloy::persistence::DocumentId;
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use std::sync::Arc;
-use uuid::Uuid;
 use yrs::updates::decoder::Decode;
 use yrs::{Doc, ReadTxn, StateVector, Text, Transact};
 
@@ -44,7 +43,7 @@ fn bench_document_creation(c: &mut Criterion) {
     c.bench_function("document_creation", |b| {
         b.to_async(&runtime).iter(|| async {
             let state = Arc::new(AppState::new());
-            let doc_id = DocumentId(Uuid::new_v4());
+            let doc_id = DocumentId::new();
             if let Err(err) = get_or_create_doc(state, black_box(doc_id)).await {
                 eprintln!("document_creation iteration failed: {err}");
             }
@@ -57,7 +56,7 @@ fn bench_document_retrieval(c: &mut Criterion) {
         return;
     };
     let state = Arc::new(AppState::new());
-    let doc_id = DocumentId(Uuid::new_v4());
+    let doc_id = DocumentId::new();
 
     // Pre-create document
     runtime.block_on(async {
@@ -88,7 +87,7 @@ fn bench_document_concurrent_access(c: &mut Criterion) {
                 };
 
                 let state = Arc::new(AppState::new());
-                let doc_id = DocumentId(Uuid::new_v4());
+                let doc_id = DocumentId::new();
 
                 // Pre-create document
                 runtime.block_on(async {
@@ -294,7 +293,7 @@ fn bench_document_count_scaling(c: &mut Criterion) {
                     let state = Arc::new(AppState::new());
 
                     for _ in 0..num_docs {
-                        let doc_id = DocumentId(Uuid::new_v4());
+                        let doc_id = DocumentId::new();
                         if let Err(err) = get_or_create_doc(state.clone(), doc_id).await {
                             eprintln!("document_count_scaling iteration failed: {err}");
                             break;
@@ -340,7 +339,7 @@ fn bench_read_lock_contention(c: &mut Criterion) {
     };
 
     let state = Arc::new(AppState::new());
-    let doc_id = DocumentId(Uuid::new_v4());
+    let doc_id = DocumentId::new();
 
     // Pre-create document
     runtime.block_on(async {
@@ -377,7 +376,7 @@ fn bench_document_creation_race(c: &mut Criterion) {
     c.bench_function("document_creation_race", |b| {
         b.to_async(&runtime).iter(|| async {
             let state = Arc::new(AppState::new());
-            let doc_id = DocumentId(Uuid::new_v4());
+            let doc_id = DocumentId::new();
             let mut handles = Vec::new();
 
             // 20 tasks trying to create same document simultaneously

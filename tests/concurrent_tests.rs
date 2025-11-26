@@ -1,8 +1,8 @@
+use alloy::persistence::DocumentId;
 use common::TestResult;
 use futures_util::SinkExt;
 use std::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
-use uuid::Uuid;
 use yrs::types::Text;
 use yrs::{ReadTxn, StateVector, Transact};
 
@@ -11,7 +11,7 @@ mod common;
 #[tokio::test]
 async fn test_client_insert_text() -> TestResult<()> {
     let (addr, state) = common::spawn_test_server().await?;
-    let doc_id = Uuid::new_v4();
+    let doc_id = DocumentId::new();
 
     let ws = common::connect_to_doc(addr, doc_id).await?;
 
@@ -27,7 +27,7 @@ async fn test_client_insert_text() -> TestResult<()> {
 #[tokio::test]
 async fn test_client_delete_text() -> TestResult<()> {
     let (addr, _state) = common::spawn_test_server().await?;
-    let doc_id = Uuid::new_v4();
+    let doc_id = DocumentId::new();
 
     let mut ws = common::connect_to_doc(addr, doc_id).await?;
 
@@ -53,7 +53,7 @@ async fn test_client_delete_text() -> TestResult<()> {
 #[tokio::test]
 async fn test_client_multiple_operations() -> TestResult<()> {
     let (addr, state) = common::spawn_test_server().await?;
-    let doc_id = Uuid::new_v4();
+    let doc_id = DocumentId::new();
 
     let ws = common::connect_to_doc(addr, doc_id).await?;
 
@@ -70,7 +70,7 @@ async fn test_client_multiple_operations() -> TestResult<()> {
 #[tokio::test]
 async fn test_two_clients_sync_text() -> TestResult<()> {
     let (addr, state) = common::spawn_test_server().await?;
-    let doc_id = Uuid::new_v4();
+    let doc_id = DocumentId::new();
 
     let client_a = common::connect_to_doc(addr, doc_id).await?;
     let client_b = common::connect_to_doc(addr, doc_id).await?;
@@ -90,7 +90,7 @@ async fn test_two_clients_sync_text() -> TestResult<()> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_concurrent_insertions_converge() -> TestResult<()> {
     let (addr, _state) = common::spawn_test_server().await?;
-    let doc_id = Uuid::new_v4();
+    let doc_id = DocumentId::new();
 
     let mut clients = vec![
         common::connect_to_doc(addr, doc_id).await?,
@@ -122,7 +122,7 @@ async fn test_concurrent_insertions_converge() -> TestResult<()> {
 #[tokio::test]
 async fn test_late_joiner_receives_full_state() -> TestResult<()> {
     let (addr, state) = common::spawn_test_server().await?;
-    let doc_id = Uuid::new_v4();
+    let doc_id = DocumentId::new();
 
     let mut client_a = common::connect_to_doc(addr, doc_id).await?;
 
@@ -149,7 +149,7 @@ async fn test_late_joiner_receives_full_state() -> TestResult<()> {
 #[tokio::test]
 async fn test_client_disconnect_during_sync() -> TestResult<()> {
     let (addr, _state) = common::spawn_test_server().await?;
-    let doc_id = Uuid::new_v4();
+    let doc_id = DocumentId::new();
 
     let mut client_a = common::connect_to_doc(addr, doc_id).await?;
     let client_b = common::connect_to_doc(addr, doc_id).await?;
@@ -177,7 +177,7 @@ async fn test_client_disconnect_during_sync() -> TestResult<()> {
 #[tokio::test]
 async fn test_reconnect_and_sync() -> TestResult<()> {
     let (addr, _state) = common::spawn_test_server().await?;
-    let doc_id = Uuid::new_v4();
+    let doc_id = DocumentId::new();
 
     let mut client = common::connect_to_doc(addr, doc_id).await?;
 
@@ -207,7 +207,7 @@ async fn test_reconnect_and_sync() -> TestResult<()> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_ten_concurrent_clients() -> TestResult<()> {
     let (addr, state) = common::spawn_test_server().await?;
-    let doc_id = Uuid::new_v4();
+    let doc_id = DocumentId::new();
 
     let mut clients = Vec::new();
     for _ in 0..10 {
@@ -234,7 +234,7 @@ async fn test_ten_concurrent_clients() -> TestResult<()> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn test_hundred_clients_connection_only() -> TestResult<()> {
     let (addr, state) = common::spawn_test_server().await?;
-    let doc_id = Uuid::new_v4();
+    let doc_id = DocumentId::new();
 
     let mut clients = Vec::new();
 
@@ -258,7 +258,7 @@ async fn test_hundred_clients_connection_only() -> TestResult<()> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_rapid_connect_disconnect() -> TestResult<()> {
     let (addr, _state) = common::spawn_test_server().await?;
-    let doc_id = Uuid::new_v4();
+    let doc_id = DocumentId::new();
 
     for _ in 0..50 {
         let mut client = common::connect_to_doc(addr, doc_id).await?;
@@ -273,7 +273,7 @@ async fn test_rapid_connect_disconnect() -> TestResult<()> {
 #[tokio::test]
 async fn test_large_document_sync() -> TestResult<()> {
     let (addr, state) = common::spawn_test_server().await?;
-    let doc_id = Uuid::new_v4();
+    let doc_id = DocumentId::new();
 
     let client_a = common::connect_to_doc(addr, doc_id).await?;
 

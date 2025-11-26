@@ -18,6 +18,9 @@ pub enum AppError {
 
     #[error("Store error: {0}")]
     Store(String),
+
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
 }
 
 impl IntoResponse for AppError {
@@ -40,6 +43,7 @@ impl IntoResponse for AppError {
                 format!("Address parse error: {}", e),
             ),
             AppError::Store(e) => (StatusCode::INTERNAL_SERVER_ERROR, e),
+            AppError::InvalidInput(e) => (StatusCode::BAD_REQUEST, e),
         };
         (status, msg).into_response()
     }

@@ -11,8 +11,8 @@ yrs-axum = "0.8.2"
 futures-util = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
-uuid = { version = "1.0", features = ["v4", "serde"] }
 thiserror = "2"
+sonyflake = "0.2"
 tower-http = { version = "0.6.7", features = ["trace"] }
 async-trait = "0.1"
 tokio-util = "0.7"
