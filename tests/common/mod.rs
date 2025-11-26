@@ -1,19 +1,16 @@
-use alloy::document::{get_or_create_doc, ActiveDocument, AppState};
-use axum::extract::ws::{WebSocket, WebSocketUpgrade};
+use alloy::document::{AppState, get_or_create_doc, peer};
+use alloy::persistence::{DocumentId, MemoryStore, UserId};
+use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{Path, State};
 use axum::response::IntoResponse;
-use axum::{routing::get, Router};
-use futures_util::StreamExt;
+use axum::{Router, routing::get};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
-use tokio_tungstenite::{connect_async, WebSocketStream};
+use tokio_tungstenite::{WebSocketStream, connect_async};
 use uuid::Uuid;
-use yrs::{Doc, GetString, ReadTxn, StateVector, Transact};
-use yrs::types::Text;
-use yrs_axum::ws::{AxumSink, AxumStream};
+use yrs::{Doc, GetString, ReadTxn, StateVector, Text, Transact};
 
 #[derive(Debug, Error)]
 pub enum TestError {
@@ -42,7 +39,8 @@ pub type TestResult<T> = Result<T, TestError>;
 pub async fn spawn_test_server() -> TestResult<(SocketAddr, Arc<AppState>)> {
     init_test_tracing();
 
-    let state = Arc::new(AppState::new());
+    let store = Arc::new(MemoryStore::default());
+    let state = Arc::new(AppState::with_store(store));
     let app = create_test_router(state.clone());
 
     let listener = TcpListener::bind("127.0.0.1:0").await?;
@@ -73,23 +71,10 @@ async fn test_ws_handler(
     Path(doc_id): Path<Uuid>,
     State(state): State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, alloy::error::AppError> {
-    let doc = get_or_create_doc(state, doc_id).await?;
-    Ok(ws.on_upgrade(move |socket| test_peer(socket, doc, doc_id)))
-}
-
-/// Peer handler for tests (mirrors main.rs implementation)
-async fn test_peer(ws: WebSocket, active_doc: Arc<ActiveDocument>, doc_id: Uuid) {
-    tracing::info!("Test peer connected to {}", doc_id);
-
-    let (sink, stream) = ws.split();
-    let sink = Arc::new(Mutex::new(AxumSink::from(sink)));
-    let stream = AxumStream::from(stream);
-
-    let sub = active_doc.bcast.subscribe(sink, stream);
-    match sub.completed().await {
-        Ok(_) => tracing::info!("Test peer finished for {}", doc_id),
-        Err(err) => tracing::error!("Test peer aborted for {}: {}", doc_id, err),
-    }
+    let doc_id = DocumentId(doc_id);
+    let doc = get_or_create_doc(state.clone(), doc_id).await?;
+    let user = UserId("test".to_string());
+    Ok(ws.on_upgrade(move |socket| peer(socket, doc, doc_id, state, user)))
 }
 
 /// Connect to a document and return the WebSocket stream
@@ -150,15 +135,14 @@ pub fn assert_docs_equal(doc1: &Doc, doc2: &Doc) {
 
 /// Initialize tracing for tests (only initializes once)
 pub fn init_test_tracing() {
-    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
+    use tracing_subscriber::{EnvFilter, Layer, layer::SubscriberExt, util::SubscriberInitExt};
 
     let _ = tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
                 .with_test_writer()
                 .with_filter(
-                    EnvFilter::try_from_default_env()
-                        .unwrap_or_else(|_| EnvFilter::new("info"))
+                    EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
                 ),
         )
         .try_init();

@@ -15,6 +15,9 @@ pub enum AppError {
 
     #[error("Address parse error: {0}")]
     AddrParse(#[from] std::net::AddrParseError),
+
+    #[error("Store error: {0}")]
+    Store(String),
 }
 
 impl IntoResponse for AppError {
@@ -36,6 +39,7 @@ impl IntoResponse for AppError {
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Address parse error: {}", e),
             ),
+            AppError::Store(e) => (StatusCode::INTERNAL_SERVER_ERROR, e),
         };
         (status, msg).into_response()
     }

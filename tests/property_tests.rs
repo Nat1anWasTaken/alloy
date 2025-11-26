@@ -1,10 +1,10 @@
 use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
-use yrs::{Doc, GetString, ReadTxn, StateVector, Transact, Update};
+use thiserror::Error;
+use yrs::encoding::read::Error as DecodeError;
 use yrs::types::Text;
 use yrs::updates::decoder::Decode;
-use yrs::encoding::read::Error as DecodeError;
-use thiserror::Error;
+use yrs::{Doc, GetString, ReadTxn, StateVector, Transact, Update};
 
 #[derive(Debug, Clone)]
 enum TextOperation {

@@ -1,10 +1,10 @@
-use futures_util::SinkExt;
 use common::TestResult;
+use futures_util::SinkExt;
 use std::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
 use uuid::Uuid;
-use yrs::{ReadTxn, StateVector, Transact};
 use yrs::types::Text;
+use yrs::{ReadTxn, StateVector, Transact};
 
 mod common;
 
@@ -134,7 +134,11 @@ async fn test_late_joiner_receives_full_state() -> TestResult<()> {
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    assert_eq!(state.docs.read().await.len(), 1, "Should still have 1 shared document");
+    assert_eq!(
+        state.docs.read().await.len(),
+        1,
+        "Should still have 1 shared document"
+    );
 
     client_a.close(None).await?;
     client_b.close(None).await?;
@@ -212,7 +216,11 @@ async fn test_ten_concurrent_clients() -> TestResult<()> {
 
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    assert_eq!(state.docs.read().await.len(), 1, "Should have 1 shared document");
+    assert_eq!(
+        state.docs.read().await.len(),
+        1,
+        "Should have 1 shared document"
+    );
 
     tokio::time::sleep(Duration::from_millis(200)).await;
 
@@ -277,7 +285,11 @@ async fn test_large_document_sync() -> TestResult<()> {
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    assert_eq!(state.docs.read().await.len(), 1, "Should share same document");
+    assert_eq!(
+        state.docs.read().await.len(),
+        1,
+        "Should share same document"
+    );
 
     drop(client_a);
     drop(client_b);

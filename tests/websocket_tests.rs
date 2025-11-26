@@ -1,7 +1,7 @@
-use futures_util::StreamExt;
 use common::{TestError, TestResult};
+use futures_util::StreamExt;
 use std::time::Duration;
-use tokio_tungstenite::tungstenite::protocol::{frame::coding::CloseCode, CloseFrame};
+use tokio_tungstenite::tungstenite::protocol::{CloseFrame, frame::coding::CloseCode};
 use uuid::Uuid;
 
 mod common;
@@ -23,10 +23,8 @@ async fn test_connection_with_valid_uuid() -> TestResult<()> {
     let (addr, _state) = common::spawn_test_server().await?;
     let uuid = Uuid::new_v4();
 
-    let result = tokio::time::timeout(
-        Duration::from_secs(5),
-        common::connect_to_doc(addr, uuid)
-    ).await;
+    let result =
+        tokio::time::timeout(Duration::from_secs(5), common::connect_to_doc(addr, uuid)).await;
 
     match result {
         Ok(Ok(_)) => Ok(()),
@@ -73,7 +71,9 @@ async fn test_multiple_connections_same_document() -> TestResult<()> {
 
     let docs = state.docs.read().await;
     assert_eq!(docs.len(), 1, "Should have exactly 1 document");
-    let doc = docs.get(&doc_id).ok_or(TestError::MissingDocument(doc_id))?;
+    let doc = docs
+        .get(&doc_id)
+        .ok_or(TestError::MissingDocument(doc_id))?;
     assert!(doc.upgrade().is_some(), "Document should be alive");
 
     drop(ws1);
@@ -99,9 +99,15 @@ async fn test_multiple_connections_different_documents() -> TestResult<()> {
 
     let docs = state.docs.read().await;
     assert_eq!(docs.len(), 3, "Should have exactly 3 documents");
-    let doc1 = docs.get(&doc_id1).ok_or(TestError::MissingDocument(doc_id1))?;
-    let doc2 = docs.get(&doc_id2).ok_or(TestError::MissingDocument(doc_id2))?;
-    let doc3 = docs.get(&doc_id3).ok_or(TestError::MissingDocument(doc_id3))?;
+    let doc1 = docs
+        .get(&doc_id1)
+        .ok_or(TestError::MissingDocument(doc_id1))?;
+    let doc2 = docs
+        .get(&doc_id2)
+        .ok_or(TestError::MissingDocument(doc_id2))?;
+    let doc3 = docs
+        .get(&doc_id3)
+        .ok_or(TestError::MissingDocument(doc_id3))?;
     assert!(doc1.upgrade().is_some());
     assert!(doc2.upgrade().is_some());
     assert!(doc3.upgrade().is_some());
@@ -127,14 +133,18 @@ async fn test_connection_cleanup_on_disconnect() -> TestResult<()> {
         ws.close(Some(CloseFrame {
             code: CloseCode::Normal,
             reason: "test".into(),
-        })).await?;
+        }))
+        .await?;
     }
 
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     let docs = state.docs.read().await;
     if let Some(weak_doc) = docs.get(&doc_id) {
-        assert!(weak_doc.upgrade().is_none(), "Document should be cleaned up");
+        assert!(
+            weak_doc.upgrade().is_none(),
+            "Document should be cleaned up"
+        );
     }
 
     Ok(())
@@ -165,12 +175,14 @@ async fn test_graceful_shutdown() -> TestResult<()> {
     ws1.close(Some(CloseFrame {
         code: CloseCode::Normal,
         reason: "shutdown".into(),
-    })).await?;
+    }))
+    .await?;
 
     ws2.close(Some(CloseFrame {
         code: CloseCode::Normal,
         reason: "shutdown".into(),
-    })).await?;
+    }))
+    .await?;
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
