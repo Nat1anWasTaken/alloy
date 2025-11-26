@@ -2,9 +2,9 @@ name: Clippy
 
 on:
   push:
-    branches: ["*"]
+    branches: ["**"]
   pull_request:
-    branches: ["*"]
+    branches: ["**"]
 
 env:
   RUSTFLAGS: "-Dwarnings"
