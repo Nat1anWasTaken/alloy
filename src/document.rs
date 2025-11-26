@@ -20,6 +20,12 @@ impl AppState {
     }
 }
 
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct ActiveDocument {
     pub id: Uuid,
     /// Holds the live Yrs document so it stays alive as long as the group exists.

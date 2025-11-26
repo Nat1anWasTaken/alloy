@@ -2,7 +2,8 @@ use alloy::document::{get_or_create_doc, AppState};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::sync::Arc;
 use uuid::Uuid;
-use yrs::{Doc, ReadTxn, StateVector, Transact};
+use yrs::updates::decoder::Decode;
+use yrs::{Doc, ReadTxn, StateVector, Transact, Text};
 
 // ============================================================================
 // Benchmark Group 1: Document Operations
@@ -205,7 +206,8 @@ fn bench_sync_full_state(c: &mut Criterion) {
     {
         let mut txn = doc.transact_mut();
         for i in 0..100 {
-            text.insert(&mut txn, text.len(&txn), &format!("Line {} content ", i));
+            let len = text.len(&txn);
+            text.insert(&mut txn, len, &format!("Line {} content ", i));
         }
     }
 
