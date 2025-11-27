@@ -3,6 +3,7 @@ use rand::RngCore;
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use time::{Duration, OffsetDateTime};
+use tracing::warn;
 
 use crate::error::AppError;
 use crate::persistence::{DocumentId, UserId};
@@ -62,7 +63,15 @@ impl TicketIssuer {
     pub fn from_env_or_generate() -> Self {
         let secret = match std::env::var("ALLOY_TICKET_SECRET") {
             Ok(value) => value.into_bytes(),
-            Err(_) => Self::generate_secret(),
+            Err(err) => {
+                warn!(
+                    error = %err,
+                    "ALLOY_TICKET_SECRET not set; generating an ephemeral ticket secret. \
+                     Tickets issued during this run will be invalid after the process restarts. \
+                     Set ALLOY_TICKET_SECRET to a stable value in production."
+                );
+                Self::generate_secret()
+            }
         };
 
         Self::new(&secret, DEFAULT_TTL, DEFAULT_ISSUER)
