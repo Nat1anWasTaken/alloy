@@ -8,7 +8,8 @@ use crate::error::AppError;
 
 use super::store::DocumentStore;
 use super::types::{
-    ClientId, DocumentId, SnapshotPage, SnapshotRecord, Tag, UpdateBytes, UpdateRecord, UserId,
+    ClientId, DocumentId, SessionPage, SessionRecord, SnapshotPage, SnapshotRecord, Tag,
+    UpdateBytes, UpdateRecord, UserId,
 };
 
 #[derive(Default)]
@@ -20,7 +21,8 @@ pub struct MemoryStore {
 struct MemoryState {
     updates: HashMap<DocumentId, Vec<UpdateRecord>>,
     snapshots: HashMap<DocumentId, BTreeMap<i64, SnapshotRecord>>,
-    sessions: HashMap<(DocumentId, ClientId), UserId>,
+    sessions: HashMap<DocumentId, Vec<SessionRecord>>, // ordered by insertion time (seq asc)
+    sessions_by_client: HashMap<(DocumentId, ClientId), UserId>,
 }
 
 #[async_trait::async_trait]
@@ -194,9 +196,34 @@ impl DocumentStore for MemoryStore {
     ) -> Result<(), AppError> {
         trace!("Recording session");
         let mut state = self.inner.write().await;
-        state.sessions.insert((doc, client), user);
 
-        debug!(total_sessions = state.sessions.len(), "Session recorded");
+        // Avoid duplicating sessions for the same client
+        if state.sessions_by_client.contains_key(&(doc, client)) {
+            return Ok(());
+        }
+
+        let next_seq = state
+            .sessions
+            .get(&doc)
+            .and_then(|v| v.last())
+            .map(|s| s.seq + 1)
+            .unwrap_or(1);
+
+        let record = SessionRecord {
+            seq: next_seq,
+            client,
+            user: user.clone(),
+        };
+
+        let doc_total = {
+            let doc_sessions = state.sessions.entry(doc).or_default();
+            doc_sessions.push(record);
+            doc_sessions.len()
+        };
+
+        state.sessions_by_client.insert((doc, client), user);
+
+        debug!(doc_total, "Session recorded");
 
         Ok(())
     }
@@ -209,7 +236,7 @@ impl DocumentStore for MemoryStore {
     ) -> Result<Option<UserId>, AppError> {
         trace!("Getting session");
         let state = self.inner.read().await;
-        let user = state.sessions.get(&(doc, client)).cloned();
+        let user = state.sessions_by_client.get(&(doc, client)).cloned();
 
         if let Some(ref user_id) = user {
             debug!(user = ?user_id, "Session found");
@@ -218,6 +245,51 @@ impl DocumentStore for MemoryStore {
         }
 
         Ok(user)
+    }
+
+    #[instrument(skip(self), fields(doc = ?doc, start_after, limit))]
+    async fn list_sessions(
+        &self,
+        doc: DocumentId,
+        start_after: Option<i64>,
+        limit: usize,
+    ) -> Result<SessionPage, AppError> {
+        trace!("Listing sessions for document");
+        let state = self.inner.read().await;
+
+        if limit == 0 {
+            debug!("Pagination limit is zero; returning empty page");
+            return Ok(SessionPage::default());
+        }
+
+        let mut page = SessionPage::default();
+
+        if let Some(records) = state.sessions.get(&doc) {
+            let start_idx = match start_after {
+                Some(cursor) => records
+                    .iter()
+                    .position(|r| r.seq > cursor)
+                    .unwrap_or(records.len()),
+                None => 0,
+            };
+
+            page.sessions = records
+                .iter()
+                .skip(start_idx)
+                .take(limit)
+                .cloned()
+                .collect();
+
+            if let Some(last) = page.sessions.last()
+                && records.iter().any(|r| r.seq > last.seq)
+            {
+                page.next_cursor = Some(last.seq);
+            }
+        }
+
+        debug!(count = page.sessions.len(), next_cursor = ?page.next_cursor, "Sessions listed");
+
+        Ok(page)
     }
 }
 
@@ -383,6 +455,41 @@ mod tests {
 
         let missing = store.get_session(doc_one, ClientId(99)).await?;
         assert!(missing.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn lists_sessions_for_document_with_pagination() -> TestResult<()> {
+        let store = MemoryStore::default();
+        let doc_one = DocumentId::from(31_u64);
+        let doc_two = DocumentId::from(32_u64);
+
+        store
+            .record_session(doc_one, ClientId(1), UserId("alice".to_string()))
+            .await?;
+        store
+            .record_session(doc_one, ClientId(2), UserId("bob".to_string()))
+            .await?;
+        store
+            .record_session(doc_two, ClientId(3), UserId("carol".to_string()))
+            .await?;
+
+        let first_page = store.list_sessions(doc_one, None, 1).await?;
+
+        assert_eq!(first_page.sessions.len(), 1);
+        assert_eq!(first_page.sessions[0].client, ClientId(1));
+        assert_eq!(first_page.sessions[0].user, UserId("alice".to_string()));
+        assert_eq!(first_page.next_cursor, Some(first_page.sessions[0].seq));
+
+        let second_page = store
+            .list_sessions(doc_one, first_page.next_cursor, 5)
+            .await?;
+
+        assert_eq!(second_page.sessions.len(), 1);
+        assert_eq!(second_page.sessions[0].client, ClientId(2));
+        assert_eq!(second_page.sessions[0].user, UserId("bob".to_string()));
+        assert!(second_page.next_cursor.is_none());
 
         Ok(())
     }

@@ -120,3 +120,16 @@ pub struct UpdateRecord {
     pub seq: i64,
     pub bytes: UpdateBytes,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionRecord {
+    pub seq: i64,
+    pub client: ClientId,
+    pub user: UserId,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionPage {
+    pub sessions: Vec<SessionRecord>,
+    pub next_cursor: Option<i64>,
+}

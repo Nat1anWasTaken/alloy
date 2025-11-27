@@ -5,8 +5,8 @@ use async_trait::async_trait;
 use crate::error::AppError;
 
 use super::types::{
-    ClientId, DocumentId, SnapshotBytes, SnapshotPage, SnapshotRecord, Tag, UpdateBytes,
-    UpdateRecord, UserId,
+    ClientId, DocumentId, SessionPage, SnapshotBytes, SnapshotPage, SnapshotRecord, Tag,
+    UpdateBytes, UpdateRecord, UserId,
 };
 
 #[async_trait]
@@ -57,6 +57,13 @@ pub trait DocumentStore: Send + Sync {
         doc: DocumentId,
         client: ClientId,
     ) -> Result<Option<UserId>, AppError>;
+
+    async fn list_sessions(
+        &self,
+        doc: DocumentId,
+        start_after: Option<i64>,
+        limit: usize,
+    ) -> Result<SessionPage, AppError>;
 }
 
 pub type SharedStore = Arc<dyn DocumentStore>;
