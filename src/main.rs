@@ -81,6 +81,7 @@ async fn issue_ticket(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<IssueTicketRequest>,
 ) -> Result<Json<IssueTicketResponse>, AppError> {
+    // TODO: Authenticate the requester.
     let user = UserId(payload.user_id);
     let issued = state.ticketing.issue(doc_id, &user)?;
 
