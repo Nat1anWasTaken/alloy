@@ -48,6 +48,7 @@ impl TicketIssuer {
         let issuer = issuer.into();
         let mut validation = Validation::new(Algorithm::HS256);
         validation.validate_exp = true;
+        validation.leeway = 0; // No leeway for expiration - tickets expire exactly when they say they do
         validation.set_required_spec_claims(&["exp", "iat", "iss", "sub"]);
         validation.set_issuer(&[issuer.clone()]);
 
@@ -183,6 +184,29 @@ mod tests {
         let result = second.validate(&issued.token);
 
         assert!(result.is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_expired_ticket() -> Result<(), AppError> {
+        let issuer = TicketIssuer::new(b"secret", Duration::seconds(1), "test-issuer");
+        let doc = DocumentId::from(99_u64);
+        let user = UserId("charlie".to_string());
+
+        let issued = issuer.issue(doc, &user)?;
+
+        // Wait for the ticket to expire (JWT exp is in seconds)
+        std::thread::sleep(std::time::Duration::from_secs(2));
+
+        let result = issuer.validate(&issued.token);
+
+        assert!(result.is_err());
+        if let Err(AppError::InvalidTicket(reason)) = result {
+            assert!(reason.contains("ExpiredSignature"));
+        } else {
+            panic!("Expected InvalidTicket error with ExpiredSignature");
+        }
+
         Ok(())
     }
 }
