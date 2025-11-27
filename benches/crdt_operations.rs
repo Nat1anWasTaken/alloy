@@ -16,6 +16,7 @@ fn runtime_single_thread() -> Option<tokio::runtime::Runtime> {
 fn runtime_multi_thread(worker_threads: usize) -> Option<tokio::runtime::Runtime> {
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(worker_threads)
+        .enable_all()
         .build()
         .map_err(|err| {
             eprintln!("failed to build Tokio multi-thread runtime: {err}");

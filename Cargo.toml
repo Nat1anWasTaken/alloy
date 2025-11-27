@@ -24,6 +24,10 @@ tokio-tungstenite = "0.24"
 proptest = "1.0"
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 
+[[bench]]
+name = "crdt_operations"
+harness = false
+
 [lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"
