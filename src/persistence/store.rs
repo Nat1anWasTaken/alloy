@@ -5,7 +5,8 @@ use async_trait::async_trait;
 use crate::error::AppError;
 
 use super::types::{
-    ClientId, DocumentId, SnapshotBytes, SnapshotRecord, Tag, UpdateBytes, UpdateRecord, UserId,
+    ClientId, DocumentId, SnapshotBytes, SnapshotPage, SnapshotRecord, Tag, UpdateBytes,
+    UpdateRecord, UserId,
 };
 
 #[async_trait]
@@ -21,7 +22,12 @@ pub trait DocumentStore: Send + Sync {
         base_seq: i64,
     ) -> Result<Option<SnapshotRecord>, AppError>;
 
-    async fn list_snapshots(&self, doc: DocumentId) -> Result<Vec<SnapshotRecord>, AppError>;
+    async fn list_snapshots(
+        &self,
+        doc: DocumentId,
+        start_after: Option<i64>,
+        limit: usize,
+    ) -> Result<SnapshotPage, AppError>;
 
     async fn load_updates_since(
         &self,

@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
+use std::ops::Bound;
 
 use tokio::sync::RwLock;
 use tracing::{debug, instrument, trace};
@@ -6,7 +7,9 @@ use tracing::{debug, instrument, trace};
 use crate::error::AppError;
 
 use super::store::DocumentStore;
-use super::types::{ClientId, DocumentId, SnapshotRecord, Tag, UpdateBytes, UpdateRecord, UserId};
+use super::types::{
+    ClientId, DocumentId, SnapshotPage, SnapshotRecord, Tag, UpdateBytes, UpdateRecord, UserId,
+};
 
 #[derive(Default)]
 pub struct MemoryStore {
@@ -69,19 +72,46 @@ impl DocumentStore for MemoryStore {
         Ok(snapshot)
     }
 
-    #[instrument(skip(self), fields(doc = ?doc))]
-    async fn list_snapshots(&self, doc: DocumentId) -> Result<Vec<SnapshotRecord>, AppError> {
+    #[instrument(skip(self), fields(doc = ?doc, start_after, limit))]
+    async fn list_snapshots(
+        &self,
+        doc: DocumentId,
+        start_after: Option<i64>,
+        limit: usize,
+    ) -> Result<SnapshotPage, AppError> {
         trace!("Listing snapshots");
         let state = self.inner.read().await;
-        let snapshots: Vec<SnapshotRecord> = state
-            .snapshots
-            .get(&doc)
-            .map(|snaps| snaps.values().cloned().collect())
-            .unwrap_or_default();
 
-        debug!(count = snapshots.len(), "Snapshots listed");
+        if limit == 0 {
+            debug!("Pagination limit is zero; returning empty page");
+            return Ok(SnapshotPage::default());
+        }
 
-        Ok(snapshots)
+        let mut page = SnapshotPage::default();
+
+        if let Some(snaps) = state.snapshots.get(&doc) {
+            let range_start = match start_after {
+                Some(cursor) => (Bound::Excluded(cursor), Bound::Unbounded),
+                None => (Bound::Unbounded, Bound::Unbounded),
+            };
+
+            let mut iter = snaps.range(range_start);
+
+            for (_, snapshot) in iter.by_ref().take(limit) {
+                page.snapshots.push(snapshot.clone());
+            }
+
+            if let Some(last) = page.snapshots.last() {
+                let mut remaining = snaps.range((Bound::Excluded(last.base_seq), Bound::Unbounded));
+                if remaining.next().is_some() {
+                    page.next_cursor = Some(last.base_seq);
+                }
+            }
+        }
+
+        debug!(count = page.snapshots.len(), next_cursor = ?page.next_cursor, "Snapshots listed");
+
+        Ok(page)
     }
 
     #[instrument(skip(self), fields(doc = ?doc, seq_inclusive))]
@@ -188,5 +218,59 @@ impl DocumentStore for MemoryStore {
         }
 
         Ok(user)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MemoryStore;
+    use crate::error::AppError;
+    use crate::persistence::store::DocumentStore;
+    use crate::persistence::types::{DocumentId, SnapshotBytes, Tag};
+
+    type TestResult<T> = Result<T, AppError>;
+
+    #[tokio::test]
+    async fn paginates_snapshots_with_cursor() -> TestResult<()> {
+        let store = MemoryStore::default();
+        let doc = DocumentId::from(1_u64);
+
+        for seq in 1_i64..=3 {
+            store
+                .store_snapshot(
+                    doc,
+                    SnapshotBytes(vec![seq as u8]),
+                    vec![Tag(seq.to_string())],
+                    seq,
+                )
+                .await?;
+        }
+
+        let first_page = store.list_snapshots(doc, None, 2).await?;
+        assert_eq!(first_page.snapshots.len(), 2);
+        assert_eq!(first_page.snapshots[0].base_seq, 1);
+        assert_eq!(first_page.snapshots[1].base_seq, 2);
+        assert_eq!(first_page.next_cursor, Some(2));
+
+        let second_page = store
+            .list_snapshots(doc, first_page.next_cursor, 2)
+            .await?;
+        assert_eq!(second_page.snapshots.len(), 1);
+        assert_eq!(second_page.snapshots[0].base_seq, 3);
+        assert_eq!(second_page.next_cursor, None);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn zero_limit_returns_empty_page() -> TestResult<()> {
+        let store = MemoryStore::default();
+        let doc = DocumentId::from(42_u64);
+
+        let page = store.list_snapshots(doc, None, 0).await?;
+        assert!(page.snapshots.is_empty());
+        assert!(page.next_cursor.is_none());
+
+        Ok(())
     }
 }

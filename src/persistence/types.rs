@@ -109,6 +109,12 @@ pub struct SnapshotRecord {
     pub base_seq: i64,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SnapshotPage {
+    pub snapshots: Vec<SnapshotRecord>,
+    pub next_cursor: Option<i64>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct UpdateRecord {
     pub seq: i64,
