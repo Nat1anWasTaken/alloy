@@ -23,6 +23,15 @@ pub enum AppError {
 
     #[error("Id error: {0}")]
     Id(#[from] IdError),
+
+    #[error("authentication error: {0}")]
+    Auth(String),
+
+    #[error("invalid ticket: {0}")]
+    InvalidTicket(String),
+
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
 }
 
 impl IntoResponse for AppError {
@@ -49,8 +58,18 @@ impl IntoResponse for AppError {
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Id generation error: {}", e),
             ),
+            AppError::Auth(e) | AppError::InvalidTicket(e) => {
+                (StatusCode::UNAUTHORIZED, format!("auth error: {}", e))
+            }
+            AppError::InvalidInput(e) => (StatusCode::BAD_REQUEST, e),
         };
         (status, msg).into_response()
+    }
+}
+
+impl From<jsonwebtoken::errors::Error> for AppError {
+    fn from(value: jsonwebtoken::errors::Error) -> Self {
+        AppError::Auth(value.to_string())
     }
 }
 

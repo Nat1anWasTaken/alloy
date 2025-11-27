@@ -37,10 +37,10 @@ async fn test_connection_with_valid_document_id() -> TestResult<()> {
 }
 
 #[tokio::test]
-async fn test_connection_with_invalid_document_id_path() -> TestResult<()> {
+async fn test_connection_with_invalid_ticket() -> TestResult<()> {
     let (addr, _state) = common::spawn_test_server().await?;
 
-    let url = format!("ws://{}/ws/not-a-valid-id", addr);
+    let url = format!("ws://{}/edit?ticket=not-a-valid-id", addr);
     let result = tokio_tungstenite::connect_async(&url).await;
 
     if result.is_err() {

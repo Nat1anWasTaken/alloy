@@ -5,19 +5,26 @@ use tokio::sync::RwLock;
 
 use crate::document::ActiveDocument;
 use crate::persistence::{DocumentId, RecorderConfig, SharedStore};
+use crate::session::TicketIssuer;
 
 pub struct AppState {
     pub docs: RwLock<HashMap<DocumentId, Weak<ActiveDocument>>>,
     pub store: SharedStore,
     pub recorder_config: RecorderConfig,
+    pub ticketing: TicketIssuer,
 }
 
 impl AppState {
     pub fn with_store(store: SharedStore) -> Self {
+        Self::with_components(store, TicketIssuer::from_env_or_generate())
+    }
+
+    pub fn with_components(store: SharedStore, ticketing: TicketIssuer) -> Self {
         Self {
             docs: RwLock::new(HashMap::new()),
             store,
             recorder_config: RecorderConfig::default(),
+            ticketing,
         }
     }
 

@@ -1,10 +1,14 @@
+use alloy::api::{IssueTicketRequest, IssueTicketResponse, TicketQuery};
 use alloy::document::{AppState, get_or_create_doc};
-use alloy::session::peer;
 use alloy::persistence::{DocumentId, IdError, MemoryStore, UserId};
+use alloy::session::{TicketIssuer, peer};
 use axum::extract::ws::WebSocketUpgrade;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
-use axum::{Router, routing::get};
+use axum::{
+    Json, Router,
+    routing::{get, post},
+};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use thiserror::Error;
@@ -28,6 +32,11 @@ pub enum TestError {
     UnexpectedConnection,
     #[error("id generation failed: {0}")]
     Id(#[from] IdError),
+    #[error("http: {0}")]
+    Http(#[from] reqwest::Error),
+    #[allow(dead_code)]
+    #[error("unexpected status {0}")]
+    UnexpectedStatus(reqwest::StatusCode),
 }
 
 impl From<tokio_tungstenite::tungstenite::Error> for TestError {
@@ -41,12 +50,13 @@ pub type TestResult<T> = Result<T, TestError>;
 pub async fn spawn_test_server() -> TestResult<(SocketAddr, Arc<AppState>)> {
     init_test_tracing();
 
-    let store = Arc::new(MemoryStore::default());
-    let state = Arc::new(AppState::with_store(store));
-    let app = create_test_router(state.clone());
-
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
+
+    let store = Arc::new(MemoryStore::default());
+    let ticketing = TicketIssuer::development();
+    let state = Arc::new(AppState::with_components(store, ticketing));
+    let app = create_test_router(state.clone());
 
     tokio::spawn(async move {
         if let Err(err) = axum::serve(listener, app).await {
@@ -63,29 +73,75 @@ pub async fn spawn_test_server() -> TestResult<(SocketAddr, Arc<AppState>)> {
 /// Create the test router with the same structure as main.rs
 fn create_test_router(state: Arc<AppState>) -> Router {
     Router::new()
-        .route("/ws/{doc_id}", get(test_ws_handler))
+        .route("/api/documents/{doc_id}/ticket", post(test_issue_ticket))
+        .route("/edit", get(test_ws_handler))
         .with_state(state)
 }
 
 /// WebSocket handler for tests (mirrors main.rs implementation)
 async fn test_ws_handler(
     ws: WebSocketUpgrade,
-    Path(doc_id): Path<DocumentId>,
+    Query(params): Query<TicketQuery>,
     State(state): State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, alloy::error::AppError> {
+    let ticket = params
+        .ticket
+        .ok_or_else(|| alloy::error::AppError::InvalidTicket("ticket required".to_string()))?;
+    let subject = state.ticketing.validate(&ticket)?;
+    let doc_id = subject.doc_id;
     let doc = get_or_create_doc(state.clone(), doc_id).await?;
-    let user = UserId("test".to_string());
+    let user = subject.user_id;
     Ok(ws.on_upgrade(move |socket| peer(socket, doc, doc_id, state, user)))
 }
 
+async fn test_issue_ticket(
+    Path(doc_id): Path<DocumentId>,
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<IssueTicketRequest>,
+) -> Result<Json<IssueTicketResponse>, alloy::error::AppError> {
+    let user = UserId(payload.user_id);
+    let issued = state.ticketing.issue(doc_id, &user)?;
+
+    Ok(Json(IssueTicketResponse {
+        ticket: issued.token,
+        expires_at: issued.expires_at,
+    }))
+}
+
 /// Connect to a document and return the WebSocket stream
+#[allow(dead_code)]
 pub async fn connect_to_doc(
     addr: SocketAddr,
     doc_id: DocumentId,
 ) -> TestResult<WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>> {
-    let url = format!("ws://{}/ws/{}", addr, doc_id);
-    let (ws_stream, _response) = connect_async(&url).await?;
+    let ticket = request_ticket(addr, doc_id, "test").await?;
+    let ws_url = format!("ws://{addr}/edit?ticket={}", ticket.ticket);
+    let (ws_stream, _response) = connect_async(&ws_url).await?;
     Ok(ws_stream)
+}
+
+#[allow(dead_code)]
+pub async fn request_ticket(
+    addr: SocketAddr,
+    doc_id: DocumentId,
+    user: &str,
+) -> TestResult<IssueTicketResponse> {
+    let client = reqwest::Client::new();
+    let url = format!("http://{}/api/documents/{}/ticket", addr, doc_id);
+    let response = client
+        .post(url)
+        .json(&IssueTicketRequest {
+            user_id: user.to_string(),
+        })
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        return Err(TestError::UnexpectedStatus(response.status()));
+    }
+
+    let body = response.json::<IssueTicketResponse>().await?;
+    Ok(body)
 }
 
 /// Create a Yrs update with the given text content
