@@ -10,6 +10,7 @@ use crate::persistence::{DocumentId, UserId};
 
 const DEFAULT_ISSUER: &str = "alloy";
 const DEFAULT_TTL: Duration = Duration::minutes(15);
+const CURRENT_VERSION: u8 = 1;
 
 #[derive(Clone)]
 pub struct TicketIssuer {
@@ -49,7 +50,7 @@ impl TicketIssuer {
         let mut validation = Validation::new(Algorithm::HS256);
         validation.validate_exp = true;
         validation.leeway = 0; // No leeway for expiration - tickets expire exactly when they say they do
-        validation.set_required_spec_claims(&["exp", "iat", "iss", "sub"]);
+        validation.set_required_spec_claims(&["exp", "iat", "iss", "sub", "ver"]);
         validation.set_issuer(&[issuer.clone()]);
 
         Self {
@@ -102,7 +103,7 @@ impl TicketIssuer {
             exp: exp.unix_timestamp(),
             iat: now.unix_timestamp(),
             iss: self.issuer.clone(),
-            ver: 1,
+            ver: CURRENT_VERSION,
         };
 
         let token = encode(&Header::new(Algorithm::HS256), &claims, &self.encoding)
@@ -125,6 +126,14 @@ impl TicketIssuer {
                 let reason = err.to_string();
                 AppError::InvalidTicket(reason)
             })?;
+
+        // Validate version
+        if data.claims.ver != CURRENT_VERSION {
+            return Err(AppError::InvalidTicket(format!(
+                "unsupported ticket version: expected {}, got {}",
+                CURRENT_VERSION, data.claims.ver
+            )));
+        }
 
         Ok(TicketSubject {
             doc_id: data.claims.doc.into(),
@@ -205,6 +214,43 @@ mod tests {
             assert!(reason.contains("ExpiredSignature"));
         } else {
             panic!("Expected InvalidTicket error with ExpiredSignature");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_wrong_version() -> Result<(), AppError> {
+        let issuer = TicketIssuer::new(b"secret", Duration::minutes(5), "test-issuer");
+        let doc = DocumentId::from(123_u64);
+        let user = UserId("dave".to_string());
+        let now = OffsetDateTime::now_utc();
+
+        // Create a ticket with wrong version
+        let claims = SessionTicketClaims {
+            sub: user.0.clone(),
+            doc: doc.as_u64(),
+            exp: (now + Duration::minutes(5)).unix_timestamp(),
+            iat: now.unix_timestamp(),
+            iss: "test-issuer".to_string(),
+            ver: 99, // Wrong version
+        };
+
+        let token = encode(
+            &Header::new(Algorithm::HS256),
+            &claims,
+            &issuer.encoding,
+        )
+        .unwrap();
+
+        let result = issuer.validate(&token);
+
+        assert!(result.is_err());
+        if let Err(AppError::InvalidTicket(reason)) = result {
+            assert!(reason.contains("unsupported ticket version"));
+            assert!(reason.contains("expected 1, got 99"));
+        } else {
+            panic!("Expected InvalidTicket error with version mismatch");
         }
 
         Ok(())
