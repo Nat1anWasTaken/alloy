@@ -51,7 +51,7 @@ impl TicketIssuer {
         validation.validate_exp = true;
         validation.leeway = 0; // No leeway for expiration - tickets expire exactly when they say they do
         validation.set_required_spec_claims(&["exp", "iat", "iss", "sub", "ver"]);
-        validation.set_issuer(&[issuer.clone()]);
+        validation.set_issuer(std::slice::from_ref(&issuer));
 
         Self {
             encoding: EncodingKey::from_secret(secret),
@@ -209,12 +209,11 @@ mod tests {
 
         let result = issuer.validate(&issued.token);
 
-        assert!(result.is_err());
-        if let Err(AppError::InvalidTicket(reason)) = result {
-            assert!(reason.contains("ExpiredSignature"));
-        } else {
-            panic!("Expected InvalidTicket error with ExpiredSignature");
-        }
+        assert!(
+            matches!(result, Err(AppError::InvalidTicket(ref reason)) if reason.contains("ExpiredSignature")),
+            "Expected InvalidTicket error with ExpiredSignature, got: {:?}",
+            result
+        );
 
         Ok(())
     }
@@ -241,17 +240,17 @@ mod tests {
             &claims,
             &issuer.encoding,
         )
-        .unwrap();
+        .map_err(AppError::from)?;
 
         let result = issuer.validate(&token);
 
-        assert!(result.is_err());
-        if let Err(AppError::InvalidTicket(reason)) = result {
-            assert!(reason.contains("unsupported ticket version"));
-            assert!(reason.contains("expected 1, got 99"));
-        } else {
-            panic!("Expected InvalidTicket error with version mismatch");
-        }
+        assert!(
+            matches!(result, Err(AppError::InvalidTicket(ref reason))
+                if reason.contains("unsupported ticket version")
+                && reason.contains("expected 1, got 99")),
+            "Expected InvalidTicket error with version mismatch, got: {:?}",
+            result
+        );
 
         Ok(())
     }
