@@ -15,6 +15,14 @@ pub trait DocumentStore: Send + Sync {
         doc: DocumentId,
     ) -> Result<Option<SnapshotRecord>, AppError>;
 
+    async fn load_snapshot(
+        &self,
+        doc: DocumentId,
+        base_seq: i64,
+    ) -> Result<Option<SnapshotRecord>, AppError>;
+
+    async fn list_snapshots(&self, doc: DocumentId) -> Result<Vec<SnapshotRecord>, AppError>;
+
     async fn load_updates_since(
         &self,
         doc: DocumentId,

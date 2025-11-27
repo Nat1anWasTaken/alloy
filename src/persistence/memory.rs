@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use tokio::sync::RwLock;
 use tracing::{debug, instrument, trace};
@@ -16,7 +16,7 @@ pub struct MemoryStore {
 #[derive(Default)]
 struct MemoryState {
     updates: HashMap<DocumentId, Vec<UpdateRecord>>,
-    snapshots: HashMap<DocumentId, SnapshotRecord>,
+    snapshots: HashMap<DocumentId, BTreeMap<i64, SnapshotRecord>>,
     sessions: HashMap<(DocumentId, ClientId), UserId>,
 }
 
@@ -29,7 +29,10 @@ impl DocumentStore for MemoryStore {
     ) -> Result<Option<SnapshotRecord>, AppError> {
         trace!("Loading latest snapshot");
         let state = self.inner.read().await;
-        let snapshot = state.snapshots.get(&doc).cloned();
+        let snapshot = state
+            .snapshots
+            .get(&doc)
+            .and_then(|snaps| snaps.iter().next_back().map(|(_, snap)| snap.clone()));
 
         if let Some(ref snap) = snapshot {
             debug!(
@@ -42,6 +45,43 @@ impl DocumentStore for MemoryStore {
         }
 
         Ok(snapshot)
+    }
+
+    #[instrument(skip(self), fields(doc = ?doc, base_seq))]
+    async fn load_snapshot(
+        &self,
+        doc: DocumentId,
+        base_seq: i64,
+    ) -> Result<Option<SnapshotRecord>, AppError> {
+        trace!("Loading specific snapshot");
+        let state = self.inner.read().await;
+        let snapshot = state
+            .snapshots
+            .get(&doc)
+            .and_then(|snaps| snaps.get(&base_seq).cloned());
+
+        if let Some(ref snap) = snapshot {
+            debug!(base_seq = snap.base_seq, tags_count = snap.tags.len(), "Snapshot found");
+        } else {
+            debug!("Snapshot not found");
+        }
+
+        Ok(snapshot)
+    }
+
+    #[instrument(skip(self), fields(doc = ?doc))]
+    async fn list_snapshots(&self, doc: DocumentId) -> Result<Vec<SnapshotRecord>, AppError> {
+        trace!("Listing snapshots");
+        let state = self.inner.read().await;
+        let snapshots: Vec<SnapshotRecord> = state
+            .snapshots
+            .get(&doc)
+            .map(|snaps| snaps.values().cloned().collect())
+            .unwrap_or_default();
+
+        debug!(count = snapshots.len(), "Snapshots listed");
+
+        Ok(snapshots)
     }
 
     #[instrument(skip(self), fields(doc = ?doc, seq_inclusive))]
@@ -100,8 +140,9 @@ impl DocumentStore for MemoryStore {
     ) -> Result<(), AppError> {
         trace!("Storing snapshot");
         let mut state = self.inner.write().await;
-        state.snapshots.insert(
-            doc,
+        let entry = state.snapshots.entry(doc).or_default();
+        entry.insert(
+            base_seq,
             SnapshotRecord {
                 snapshot,
                 tags,
