@@ -226,7 +226,7 @@ mod tests {
     use super::MemoryStore;
     use crate::error::AppError;
     use crate::persistence::store::DocumentStore;
-    use crate::persistence::types::{DocumentId, SnapshotBytes, Tag};
+    use crate::persistence::types::{ClientId, DocumentId, SnapshotBytes, Tag, UpdateBytes, UserId};
 
     type TestResult<T> = Result<T, AppError>;
 
@@ -270,6 +270,119 @@ mod tests {
         let page = store.list_snapshots(doc, None, 0).await?;
         assert!(page.snapshots.is_empty());
         assert!(page.next_cursor.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn loads_latest_and_specific_snapshot() -> TestResult<()> {
+        let store = MemoryStore::default();
+        let doc = DocumentId::from(7_u64);
+
+        store
+            .store_snapshot(
+                doc,
+                SnapshotBytes(vec![1]),
+                vec![Tag("older".to_string())],
+                5,
+            )
+            .await?;
+        store
+            .store_snapshot(
+                doc,
+                SnapshotBytes(vec![2]),
+                vec![Tag("newer".to_string())],
+                10,
+            )
+            .await?;
+
+        let latest = store
+            .load_latest_snapshot(doc)
+            .await?
+            .ok_or_else(|| AppError::Store("expected latest snapshot".to_string()))?;
+        assert_eq!(latest.base_seq, 10);
+        assert_eq!(latest.snapshot, SnapshotBytes(vec![2]));
+        assert_eq!(latest.tags, vec![Tag("newer".to_string())]);
+
+        let specific = store
+            .load_snapshot(doc, 5)
+            .await?
+            .ok_or_else(|| AppError::Store("expected snapshot at base_seq 5".to_string()))?;
+        assert_eq!(specific.base_seq, 5);
+        assert_eq!(specific.snapshot, SnapshotBytes(vec![1]));
+        assert_eq!(specific.tags, vec![Tag("older".to_string())]);
+
+        let missing = store.load_snapshot(doc, 99).await?;
+        assert!(missing.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn appends_updates_and_filters_by_sequence() -> TestResult<()> {
+        let store = MemoryStore::default();
+        let doc = DocumentId::from(11_u64);
+
+        let first_seq = store.append_update(doc, UpdateBytes(vec![1])).await?;
+        let second_seq = store.append_update(doc, UpdateBytes(vec![2])).await?;
+        let third_seq = store.append_update(doc, UpdateBytes(vec![3])).await?;
+
+        assert_eq!(first_seq, 1);
+        assert_eq!(second_seq, 2);
+        assert_eq!(third_seq, 3);
+
+        let all_updates = store.load_updates_since(doc, 0).await?;
+        assert_eq!(all_updates.len(), 3);
+        assert_eq!(all_updates[0].seq, 1);
+        assert_eq!(all_updates[1].seq, 2);
+        assert_eq!(all_updates[2].seq, 3);
+
+        let after_first = store.load_updates_since(doc, 1).await?;
+        assert_eq!(after_first.len(), 2);
+        assert!(after_first.iter().all(|u| u.seq > 1));
+
+        let none_after_third = store.load_updates_since(doc, 3).await?;
+        assert!(none_after_third.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn records_and_reads_sessions_per_client() -> TestResult<()> {
+        let store = MemoryStore::default();
+        let doc_one = DocumentId::from(21_u64);
+        let doc_two = DocumentId::from(22_u64);
+
+        store
+            .record_session(doc_one, ClientId(1), UserId("alice".to_string()))
+            .await?;
+        store
+            .record_session(doc_one, ClientId(2), UserId("bob".to_string()))
+            .await?;
+        store
+            .record_session(doc_two, ClientId(1), UserId("carol".to_string()))
+            .await?;
+
+        let alice = store
+            .get_session(doc_one, ClientId(1))
+            .await?
+            .ok_or_else(|| AppError::Store("missing session for alice".to_string()))?;
+        assert_eq!(alice, UserId("alice".to_string()));
+
+        let bob = store
+            .get_session(doc_one, ClientId(2))
+            .await?
+            .ok_or_else(|| AppError::Store("missing session for bob".to_string()))?;
+        assert_eq!(bob, UserId("bob".to_string()));
+
+        let carol = store
+            .get_session(doc_two, ClientId(1))
+            .await?
+            .ok_or_else(|| AppError::Store("missing session for carol".to_string()))?;
+        assert_eq!(carol, UserId("carol".to_string()));
+
+        let missing = store.get_session(doc_one, ClientId(99)).await?;
+        assert!(missing.is_none());
 
         Ok(())
     }
