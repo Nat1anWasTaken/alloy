@@ -44,16 +44,18 @@ struct SessionTicketClaims {
 
 impl TicketIssuer {
     pub fn new(secret: &[u8], ttl: Duration, issuer: impl Into<String>) -> Self {
+        let issuer = issuer.into();
         let mut validation = Validation::new(Algorithm::HS256);
         validation.validate_exp = true;
         validation.set_required_spec_claims(&["exp", "iat", "iss", "sub"]);
+        validation.set_issuer(&[issuer.clone()]);
 
         Self {
             encoding: EncodingKey::from_secret(secret),
             decoding: DecodingKey::from_secret(secret),
             validation,
             ttl,
-            issuer: issuer.into(),
+            issuer,
         }
     }
 
@@ -113,10 +115,6 @@ impl TicketIssuer {
                 let reason = err.to_string();
                 AppError::InvalidTicket(reason)
             })?;
-
-        if data.claims.iss != self.issuer {
-            return Err(AppError::InvalidTicket("invalid issuer".to_string()));
-        }
 
         Ok(TicketSubject {
             doc_id: data.claims.doc.into(),
