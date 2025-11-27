@@ -66,7 +66,11 @@ impl DocumentStore for MemoryStore {
             .and_then(|snaps| snaps.get(&base_seq).cloned());
 
         if let Some(ref snap) = snapshot {
-            debug!(base_seq = snap.base_seq, tags_count = snap.tags.len(), "Snapshot found");
+            debug!(
+                base_seq = snap.base_seq,
+                tags_count = snap.tags.len(),
+                "Snapshot found"
+            );
         } else {
             debug!("Snapshot not found");
         }
@@ -298,7 +302,9 @@ mod tests {
     use super::MemoryStore;
     use crate::error::AppError;
     use crate::persistence::store::DocumentStore;
-    use crate::persistence::types::{ClientId, DocumentId, SnapshotBytes, Tag, UpdateBytes, UserId};
+    use crate::persistence::types::{
+        ClientId, DocumentId, SnapshotBytes, Tag, UpdateBytes, UserId,
+    };
 
     type TestResult<T> = Result<T, AppError>;
 
@@ -324,9 +330,7 @@ mod tests {
         assert_eq!(first_page.snapshots[1].base_seq, 2);
         assert_eq!(first_page.next_cursor, Some(2));
 
-        let second_page = store
-            .list_snapshots(doc, first_page.next_cursor, 2)
-            .await?;
+        let second_page = store.list_snapshots(doc, first_page.next_cursor, 2).await?;
         assert_eq!(second_page.snapshots.len(), 1);
         assert_eq!(second_page.snapshots[0].base_seq, 3);
         assert_eq!(second_page.next_cursor, None);
