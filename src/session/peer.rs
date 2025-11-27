@@ -7,10 +7,9 @@ use tracing::{info, warn};
 use yrs_axum::ws::{AxumSink, AxumStream};
 
 use crate::app_state::AppState;
+use crate::document::{ActiveDocument, close_document};
 use crate::persistence::{DocumentId, UserId};
 
-use super::active_document::ActiveDocument;
-use super::lifecycle::close_document;
 use super::protocol::SessionProtocol;
 
 pub async fn peer(
