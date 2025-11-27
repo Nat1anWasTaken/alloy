@@ -34,6 +34,7 @@ pub enum TestError {
     Id(#[from] IdError),
     #[error("http: {0}")]
     Http(#[from] reqwest::Error),
+    #[allow(dead_code)]
     #[error("unexpected status {0}")]
     UnexpectedStatus(reqwest::StatusCode),
 }
@@ -108,6 +109,7 @@ async fn test_issue_ticket(
 }
 
 /// Connect to a document and return the WebSocket stream
+#[allow(dead_code)]
 pub async fn connect_to_doc(
     addr: SocketAddr,
     doc_id: DocumentId,
@@ -118,6 +120,7 @@ pub async fn connect_to_doc(
     Ok(ws_stream)
 }
 
+#[allow(dead_code)]
 pub async fn request_ticket(
     addr: SocketAddr,
     doc_id: DocumentId,
