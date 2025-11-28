@@ -1,3 +1,19 @@
+//! HTTP API surface for the collaborative document service.
+//!
+//! The API is intentionally thin: it brokers WebSocket sessions between
+//! clients and the in-memory Yrs document instances while persisting state
+//! through `persistence::DocumentStore`. A session lifecycle looks like:
+//! 1. A caller requests a ticket for a document (`POST /api/documents/{doc_id}/ticket`).
+//! 2. The caller upgrades to the shared WebSocket endpoint `/edit?ticket=...`.
+//! 3. The `SessionProtocol` enforces that a single client id is used for the
+//!    lifetime of that session and records the (client,user) pairing.
+//! 4. Updates flow through the broadcast group and are recorded for snapshots
+//!    and historical listing APIs in this module.
+//!
+//! Documents are lazy-loaded. If no snapshot or update history exists the
+//! document starts empty; otherwise the latest snapshot plus incremental
+//! updates are replayed to reconstruct the CRDT.
+
 use crate::app_state::AppState;
 use crate::document::{close_document, get_or_create_doc};
 use crate::error::AppError;
@@ -19,29 +35,63 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use tower_http::trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::Level;
+use utoipa::{OpenApi, ToSchema};
+use utoipa_scalar::{Scalar, Servable};
 use yrs::updates::decoder::Decode;
 use yrs::{Doc, GetString, Transact, Update};
 
 /// Request payload for issuing a document session ticket.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct IssueTicketRequest {
     pub user_id: String,
 }
 
 /// Response payload containing the issued ticket.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct IssueTicketResponse {
     pub ticket: String,
     pub expires_at: i64,
 }
 
 /// Query parameters expected by the WebSocket entrypoint.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct TicketQuery {
     pub ticket: Option<String>,
 }
 
-/// Build the HTTP router with all public endpoints.
+/// OpenAPI description for all public routes in this module.
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        issue_ticket,
+        get_document_content,
+        delete_document,
+        list_snapshots_handler,
+        get_latest_snapshot_handler,
+        get_snapshot_handler,
+        list_sessions_handler,
+        get_session_handler,
+        ws_handler
+    ),
+    components(
+        schemas(
+            IssueTicketRequest,
+            IssueTicketResponse,
+            TicketQuery,
+            SnapshotResponse,
+            SnapshotListResponse,
+            SessionResponse,
+            SessionListResponse,
+            DocumentContentResponse
+        )
+    ),
+    tags(
+        (name = "documents", description = "Document tickets, content, snapshots, and session history")
+    )
+)]
+pub struct ApiDoc;
+
+/// Build the HTTP router with all public endpoints plus the Scalar explorer at `/scalar`.
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/api/documents/{doc_id}/ticket", post(issue_ticket))
@@ -70,6 +120,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(get_session_handler),
         )
         .route("/edit", get(ws_handler))
+        .merge(Scalar::with_url("/scalar", ApiDoc::openapi()))
         .layer(
             TraceLayer::new_for_http()
                 .on_request(DefaultOnRequest::new().level(Level::INFO))
@@ -78,6 +129,21 @@ pub fn router(state: Arc<AppState>) -> Router {
         .with_state(state)
 }
 
+/// Open editor socket.
+#[utoipa::path(
+    get,
+    path = "/edit",
+    summary = "Open editor socket",
+    description = "Upgrade to the collaborative WebSocket. Provide a signed `ticket` query parameter (issued by `/api/documents/{doc_id}/ticket`) which encodes `doc_id` and `user_id`. The server validates the ticket before switching protocols.",
+    params(
+        ("ticket" = String, Query, description = "Signed ticket issued by the ticket endpoint")
+    ),
+    responses(
+        (status = 101, description = "Protocol switch to collaborative WebSocket"),
+        (status = 401, description = "Ticket missing or invalid", body = String)
+    ),
+    tag = "documents"
+)]
 async fn ws_handler(
     ws: WebSocketUpgrade,
     Query(params): Query<TicketQuery>,
@@ -95,6 +161,22 @@ async fn ws_handler(
     Ok(ws.on_upgrade(move |socket| peer(socket, doc, doc_id, state, user)))
 }
 
+/// Issue edit ticket.
+#[utoipa::path(
+    post,
+    path = "/api/documents/{doc_id}/ticket",
+    summary = "Issue edit ticket",
+    description = "Create a signed ticket for `doc_id` and provided `user_id`. The ticket is required as the `ticket` query param when upgrading `/edit`.",
+    request_body = IssueTicketRequest,
+    params(
+        ("doc_id" = u64, Path, description = "Document identifier")
+    ),
+    responses(
+        (status = 200, description = "Ticket issued", body = IssueTicketResponse),
+        (status = 401, description = "Ticket request rejected", body = String)
+    ),
+    tag = "documents"
+)]
 async fn issue_ticket(
     Path(doc_id): Path<DocumentId>,
     State(state): State<Arc<AppState>>,
@@ -121,7 +203,7 @@ struct SnapshotListQuery {
     tag: OneOrMany<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 struct SnapshotResponse {
     base_seq: i64,
     tags: Vec<String>,
@@ -148,12 +230,31 @@ impl<T> OneOrMany<T> {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 struct SnapshotListResponse {
     snapshots: Vec<SnapshotResponse>,
     next_cursor: Option<i64>,
 }
 
+/// List snapshots.
+#[utoipa::path(
+    get,
+    path = "/api/documents/{doc_id}/snapshots",
+    summary = "List snapshots",
+    description = "Return persisted snapshots for a document. Supports pagination via `cursor`/`limit`, sequence filtering with `since_seq`/`max_seq`, and tag filtering (all tags must match).",
+    params(
+        ("doc_id" = u64, Path, description = "Document identifier"),
+        ("cursor" = Option<i64>, Query, description = "Pagination cursor returned by previous call"),
+        ("limit" = Option<usize>, Query, description = "Maximum snapshots to return (default 20)"),
+        ("since_seq" = Option<i64>, Query, description = "Only snapshots at or above this sequence"),
+        ("max_seq" = Option<i64>, Query, description = "Only snapshots at or below this sequence"),
+        ("tag" = Option<Vec<String>>, Query, description = "Filter snapshots that contain all provided tags")
+    ),
+    responses(
+        (status = 200, description = "Snapshot page", body = SnapshotListResponse)
+    ),
+    tag = "documents"
+)]
 async fn list_snapshots_handler(
     Path(doc_id): Path<DocumentId>,
     State(state): State<Arc<AppState>>,
@@ -208,10 +309,14 @@ fn snapshot_matches(
     max_seq: Option<i64>,
     tags: &HashSet<String>,
 ) -> bool {
-    if let Some(min) = since_seq && snap.base_seq < min {
+    if let Some(min) = since_seq
+        && snap.base_seq < min
+    {
         return false;
     }
-    if let Some(max) = max_seq && snap.base_seq > max {
+    if let Some(max) = max_seq
+        && snap.base_seq > max
+    {
         return false;
     }
 
@@ -237,6 +342,22 @@ struct SnapshotPath {
     base_seq: i64,
 }
 
+/// Get snapshot.
+#[utoipa::path(
+    get,
+    path = "/api/documents/{doc_id}/snapshots/{base_seq}",
+    summary = "Get snapshot",
+    description = "Fetch a specific snapshot identified by `base_seq` for the given document. Returns the snapshot bytes and tags if found.",
+    params(
+        ("doc_id" = u64, Path, description = "Document identifier"),
+        ("base_seq" = i64, Path, description = "Sequence number the snapshot is based on")
+    ),
+    responses(
+        (status = 200, description = "Snapshot found", body = SnapshotResponse),
+        (status = 404, description = "Snapshot not found", body = String)
+    ),
+    tag = "documents"
+)]
 async fn get_snapshot_handler(
     Path(path): Path<SnapshotPath>,
     State(state): State<Arc<AppState>>,
@@ -257,6 +378,22 @@ struct LatestSnapshotQuery {
     tag: OneOrMany<String>,
 }
 
+/// Get latest snapshot.
+#[utoipa::path(
+    get,
+    path = "/api/documents/{doc_id}/snapshots/latest",
+    summary = "Get latest snapshot",
+    description = "Return the most recent snapshot matching optional `tag` filters. Scans pages from newest to oldest until a match is found.",
+    params(
+        ("doc_id" = u64, Path, description = "Document identifier"),
+        ("tag" = Option<Vec<String>>, Query, description = "Filter snapshots by required tags")
+    ),
+    responses(
+        (status = 200, description = "Latest matching snapshot", body = SnapshotResponse),
+        (status = 404, description = "Snapshot not found", body = String)
+    ),
+    tag = "documents"
+)]
 async fn get_latest_snapshot_handler(
     Path(doc_id): Path<DocumentId>,
     State(state): State<Arc<AppState>>,
@@ -300,19 +437,39 @@ struct SessionListQuery {
     max_seq: Option<i64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 struct SessionResponse {
     seq: i64,
     client_id: u64,
     user_id: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 struct SessionListResponse {
     sessions: Vec<SessionResponse>,
     next_cursor: Option<i64>,
 }
 
+/// List sessions.
+#[utoipa::path(
+    get,
+    path = "/api/documents/{doc_id}/sessions",
+    summary = "List sessions",
+    description = "List recorded sessions for a document with pagination. Supports filtering by `user_id`, `client_id`, and sequence bounds (`min_seq`/`max_seq`).",
+    params(
+        ("doc_id" = u64, Path, description = "Document identifier"),
+        ("cursor" = Option<i64>, Query, description = "Pagination cursor"),
+        ("limit" = Option<usize>, Query, description = "Maximum sessions to return (default 20)"),
+        ("user_id" = Option<String>, Query, description = "Filter sessions by user id"),
+        ("client_id" = Option<u64>, Query, description = "Filter sessions by client id"),
+        ("min_seq" = Option<i64>, Query, description = "Lower bound of sequence number"),
+        ("max_seq" = Option<i64>, Query, description = "Upper bound of sequence number")
+    ),
+    responses(
+        (status = 200, description = "Session page", body = SessionListResponse)
+    ),
+    tag = "documents"
+)]
 async fn list_sessions_handler(
     Path(doc_id): Path<DocumentId>,
     State(state): State<Arc<AppState>>,
@@ -365,16 +522,24 @@ async fn list_sessions_handler(
 }
 
 fn session_matches(session: &SessionRecord, query: &SessionListQuery) -> bool {
-    if let Some(user) = &query.user_id && &session.user.0 != user {
+    if let Some(user) = &query.user_id
+        && &session.user.0 != user
+    {
         return false;
     }
-    if let Some(client) = query.client_id && session.client.0 != client {
+    if let Some(client) = query.client_id
+        && session.client.0 != client
+    {
         return false;
     }
-    if let Some(min) = query.min_seq && session.seq < min {
+    if let Some(min) = query.min_seq
+        && session.seq < min
+    {
         return false;
     }
-    if let Some(max) = query.max_seq && session.seq > max {
+    if let Some(max) = query.max_seq
+        && session.seq > max
+    {
         return false;
     }
     true
@@ -386,6 +551,22 @@ struct SessionPath {
     client_id: u64,
 }
 
+/// Get session.
+#[utoipa::path(
+    get,
+    path = "/api/documents/{doc_id}/sessions/{client_id}",
+    summary = "Get session",
+    description = "Look up the user bound to a `client_id` for the document. Returns the recorded `user_id` and sequence if present.",
+    params(
+        ("doc_id" = u64, Path, description = "Document identifier"),
+        ("client_id" = u64, Path, description = "Client id as seen in updates")
+    ),
+    responses(
+        (status = 200, description = "Session found", body = SessionResponse),
+        (status = 404, description = "Session not found", body = String)
+    ),
+    tag = "documents"
+)]
 async fn get_session_handler(
     Path(path): Path<SessionPath>,
     State(state): State<Arc<AppState>>,
@@ -429,13 +610,28 @@ async fn find_session_seq(
 
 // ---------- Document content & deletion ----------
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 struct DocumentContentResponse {
     doc_id: u64,
     content: String,
     seq: i64,
 }
 
+/// Get document content.
+#[utoipa::path(
+    get,
+    path = "/api/documents/{doc_id}",
+    summary = "Get document content",
+    description = "Replay the latest snapshot and updates to return current document text for cold starts or non-Yrs clients.",
+    params(
+        ("doc_id" = u64, Path, description = "Document identifier")
+    ),
+    responses(
+        (status = 200, description = "Current document content", body = DocumentContentResponse),
+        (status = 404, description = "Document not found", body = String)
+    ),
+    tag = "documents"
+)]
 async fn get_document_content(
     Path(doc_id): Path<DocumentId>,
     State(state): State<Arc<AppState>>,
@@ -477,6 +673,21 @@ async fn load_document_from_store(
     Ok((doc, last_seq))
 }
 
+/// Delete document.
+#[utoipa::path(
+    delete,
+    path = "/api/documents/{doc_id}",
+    summary = "Delete document",
+    description = "Delete all persisted state for a document. Fails with 400 if any peers are active on the document.",
+    params(
+        ("doc_id" = u64, Path, description = "Document identifier")
+    ),
+    responses(
+        (status = 204, description = "Document removed"),
+        (status = 400, description = "Document still has active peers", body = String)
+    ),
+    tag = "documents"
+)]
 async fn delete_document(
     Path(doc_id): Path<DocumentId>,
     State(state): State<Arc<AppState>>,

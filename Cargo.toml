@@ -21,6 +21,8 @@ jsonwebtoken = "9"
 time = { version = "0.3", features = ["macros"] }
 rand = "0.8"
 base64 = "0.22"
+utoipa = { version = "5", features = ["macros"] }
+utoipa-scalar = { version = "0.3", features = ["axum"] }
 
 [dev-dependencies]
 tokio-test = "0.4"

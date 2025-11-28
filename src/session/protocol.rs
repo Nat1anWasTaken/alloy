@@ -159,7 +159,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use anyhow::{ensure, Context, Result};
+    use anyhow::{Context, Result, ensure};
     use tokio::time::sleep;
     use yrs::sync::awareness::AwarenessUpdateEntry;
     use yrs::updates::decoder::Decode;
@@ -230,7 +230,10 @@ mod tests {
                     "unexpected denial reason: {reason}"
                 );
             }
-            Ok(_) => ensure!(false, "second update with mismatched client should be rejected"),
+            Ok(_) => ensure!(
+                false,
+                "second update with mismatched client should be rejected"
+            ),
             Err(e) => return Err(e.into()),
         }
 
@@ -246,7 +249,8 @@ mod tests {
             store.clone(),
         );
 
-        let merged_update = Update::merge_updates([update_from_client(5, "a")?, update_from_client(6, "b")?]);
+        let merged_update =
+            Update::merge_updates([update_from_client(5, "a")?, update_from_client(6, "b")?]);
 
         match protocol.validate_update(&merged_update) {
             Err(yrs::sync::Error::PermissionDenied { reason }) => {
@@ -296,7 +300,10 @@ mod tests {
                     "unexpected denial reason: {reason}"
                 );
             }
-            Ok(_) => ensure!(false, "awareness update with mixed clients should be rejected"),
+            Ok(_) => ensure!(
+                false,
+                "awareness update with mixed clients should be rejected"
+            ),
             Err(e) => return Err(e.into()),
         }
 
