@@ -1,14 +1,8 @@
-use alloy::api::{IssueTicketRequest, IssueTicketResponse, TicketQuery};
-use alloy::document::{AppState, get_or_create_doc};
-use alloy::persistence::{DocumentId, IdError, MemoryStore, UserId};
-use alloy::session::{TicketIssuer, peer};
-use axum::extract::ws::WebSocketUpgrade;
-use axum::extract::{Path, Query, State};
-use axum::response::IntoResponse;
-use axum::{
-    Json, Router,
-    routing::{get, post},
-};
+use alloy::api::{IssueTicketRequest, IssueTicketResponse};
+use alloy::document::AppState;
+use alloy::persistence::{DocumentId, IdError, MemoryStore};
+use alloy::session::TicketIssuer;
+use axum::Router;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use thiserror::Error;
@@ -37,6 +31,11 @@ pub enum TestError {
     #[allow(dead_code)]
     #[error("unexpected status {0}")]
     UnexpectedStatus(reqwest::StatusCode),
+    #[error("json: {0}")]
+    Json(#[from] serde_json::Error),
+    #[allow(dead_code)]
+    #[error("unexpected response: {0}")]
+    UnexpectedResponse(String),
 }
 
 impl From<tokio_tungstenite::tungstenite::Error> for TestError {
@@ -72,40 +71,7 @@ pub async fn spawn_test_server() -> TestResult<(SocketAddr, Arc<AppState>)> {
 
 /// Create the test router with the same structure as main.rs
 fn create_test_router(state: Arc<AppState>) -> Router {
-    Router::new()
-        .route("/api/documents/{doc_id}/ticket", post(test_issue_ticket))
-        .route("/edit", get(test_ws_handler))
-        .with_state(state)
-}
-
-/// WebSocket handler for tests (mirrors main.rs implementation)
-async fn test_ws_handler(
-    ws: WebSocketUpgrade,
-    Query(params): Query<TicketQuery>,
-    State(state): State<Arc<AppState>>,
-) -> Result<impl IntoResponse, alloy::error::AppError> {
-    let ticket = params
-        .ticket
-        .ok_or_else(|| alloy::error::AppError::InvalidTicket("ticket required".to_string()))?;
-    let subject = state.ticketing.validate(&ticket)?;
-    let doc_id = subject.doc_id;
-    let doc = get_or_create_doc(state.clone(), doc_id).await?;
-    let user = subject.user_id;
-    Ok(ws.on_upgrade(move |socket| peer(socket, doc, doc_id, state, user)))
-}
-
-async fn test_issue_ticket(
-    Path(doc_id): Path<DocumentId>,
-    State(state): State<Arc<AppState>>,
-    Json(payload): Json<IssueTicketRequest>,
-) -> Result<Json<IssueTicketResponse>, alloy::error::AppError> {
-    let user = UserId(payload.user_id);
-    let issued = state.ticketing.issue(doc_id, &user)?;
-
-    Ok(Json(IssueTicketResponse {
-        ticket: issued.token,
-        expires_at: issued.expires_at,
-    }))
+    alloy::api::router(state)
 }
 
 /// Connect to a document and return the WebSocket stream

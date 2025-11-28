@@ -32,6 +32,9 @@ pub enum AppError {
 
     #[error("invalid input: {0}")]
     InvalidInput(String),
+
+    #[error("not found: {0}")]
+    NotFound(String),
 }
 
 impl IntoResponse for AppError {
@@ -62,6 +65,7 @@ impl IntoResponse for AppError {
                 (StatusCode::UNAUTHORIZED, format!("auth error: {}", e))
             }
             AppError::InvalidInput(e) => (StatusCode::BAD_REQUEST, e),
+            AppError::NotFound(e) => (StatusCode::NOT_FOUND, e),
         };
         (status, msg).into_response()
     }

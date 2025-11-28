@@ -303,9 +303,7 @@ impl DocumentStore for MemoryStore {
         state.updates.remove(&doc);
         state.snapshots.remove(&doc);
         state.sessions.remove(&doc);
-        state
-            .sessions_by_client
-            .retain(|(d, _), _| d != &doc);
+        state.sessions_by_client.retain(|(d, _), _| d != &doc);
         debug!("Document deleted from memory store");
         Ok(())
     }
