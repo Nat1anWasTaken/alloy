@@ -1,7 +1,7 @@
 use alloy::api;
 use alloy::app_state::AppState;
 use alloy::error::AppError;
-use alloy::persistence::MemoryStore;
+use alloy::persistence::{MemoryStore, PostgresStore, SharedStore};
 use alloy::session::TicketIssuer;
 use dotenv::dotenv;
 use std::env;
@@ -16,11 +16,17 @@ async fn main() -> Result<(), AppError> {
 
     dotenv().ok();
 
-    let addr: SocketAddr = env::var("BIND_ADDRESS").unwrap_or("0.0.0.0:3000".into()).parse()?;
+    let addr: SocketAddr = env::var("BIND_ADDRESS")
+        .unwrap_or("0.0.0.0:3000".into())
+        .parse()?;
     let listener = TcpListener::bind(addr).await?;
     let bound_addr = listener.local_addr()?;
 
-    let store = Arc::new(MemoryStore::default());
+    let store: SharedStore = if env::var("DATABASE_URL").is_ok() {
+        Arc::new(PostgresStore::from_env().await?)
+    } else {
+        Arc::new(MemoryStore::default())
+    };
     let ticketing = TicketIssuer::from_env_or_generate();
     let state = Arc::new(AppState::with_components(store, ticketing));
 
