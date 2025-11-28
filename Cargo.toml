@@ -23,6 +23,7 @@ rand = "0.8"
 base64 = "0.22"
 utoipa = { version = "5", features = ["macros"] }
 utoipa-scalar = { version = "0.3", features = ["axum"] }
+dotenv = "0.15.0"
 
 [dev-dependencies]
 tokio-test = "0.4"

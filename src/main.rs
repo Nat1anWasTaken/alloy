@@ -3,6 +3,8 @@ use alloy::app_state::AppState;
 use alloy::error::AppError;
 use alloy::persistence::MemoryStore;
 use alloy::session::TicketIssuer;
+use dotenv::dotenv;
+use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -12,7 +14,9 @@ use tracing::info;
 async fn main() -> Result<(), AppError> {
     setup_tracing();
 
-    let addr: SocketAddr = "0.0.0.0:3000".parse()?;
+    dotenv().ok();
+
+    let addr: SocketAddr = env::var("BIND_ADDRESS").unwrap_or("0.0.0.0:3000".into()).parse()?;
     let listener = TcpListener::bind(addr).await?;
     let bound_addr = listener.local_addr()?;
 
