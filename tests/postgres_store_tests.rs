@@ -147,7 +147,9 @@ async fn list_snapshots_paginates() -> Result<()> {
     assert_eq!(first_page.snapshots.len(), 2);
     assert_eq!(first_page.snapshots[0].base_seq, 1);
     assert_eq!(first_page.snapshots[1].base_seq, 2);
-    let cursor = first_page.next_cursor.expect("next cursor missing");
+    let cursor = first_page
+        .next_cursor
+        .ok_or_else(|| anyhow!("next cursor missing"))?;
 
     let second_page = store
         .list_snapshots(doc, Some(cursor), 2)

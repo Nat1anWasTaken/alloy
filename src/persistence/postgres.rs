@@ -224,8 +224,11 @@ impl DocumentStore for PostgresStore {
         .await
         .map_err(map_sqlx_err)?;
 
-        let mut page = SnapshotPage::default();
-        page.snapshots = rows.iter().map(Self::row_to_snapshot).collect();
+        let snapshots = rows.iter().map(Self::row_to_snapshot).collect();
+        let mut page = SnapshotPage {
+            snapshots,
+            ..SnapshotPage::default()
+        };
 
         if let Some(last) = page.snapshots.last() {
             let has_more = sqlx::query_scalar::<_, i64>(
@@ -491,8 +494,7 @@ impl DocumentStore for PostgresStore {
         .await
         .map_err(map_sqlx_err)?;
 
-        let mut page = SessionPage::default();
-        page.sessions = rows
+        let sessions = rows
             .iter()
             .map(|row| super::types::SessionRecord {
                 seq: row.get::<i64, _>("seq"),
@@ -500,6 +502,10 @@ impl DocumentStore for PostgresStore {
                 user: UserId(row.get::<String, _>("user_id")),
             })
             .collect();
+        let mut page = SessionPage {
+            sessions,
+            ..SessionPage::default()
+        };
 
         if let Some(last) = page.sessions.last() {
             let has_more = sqlx::query_scalar::<_, i64>(
