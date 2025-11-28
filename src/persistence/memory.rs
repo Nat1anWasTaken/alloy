@@ -295,6 +295,20 @@ impl DocumentStore for MemoryStore {
 
         Ok(page)
     }
+
+    #[instrument(skip(self), fields(doc = ?doc))]
+    async fn delete_document(&self, doc: DocumentId) -> Result<(), AppError> {
+        trace!("Deleting document from memory store");
+        let mut state = self.inner.write().await;
+        state.updates.remove(&doc);
+        state.snapshots.remove(&doc);
+        state.sessions.remove(&doc);
+        state
+            .sessions_by_client
+            .retain(|(d, _), _| d != &doc);
+        debug!("Document deleted from memory store");
+        Ok(())
+    }
 }
 
 #[cfg(test)]

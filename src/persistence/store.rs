@@ -64,6 +64,10 @@ pub trait DocumentStore: Send + Sync {
         start_after: Option<i64>,
         limit: usize,
     ) -> Result<SessionPage, AppError>;
+
+    /// Atomically deletes all persisted state for the document, including
+    /// updates, snapshots, and sessions.
+    async fn delete_document(&self, doc: DocumentId) -> Result<(), AppError>;
 }
 
 pub type SharedStore = Arc<dyn DocumentStore>;
