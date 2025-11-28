@@ -235,12 +235,8 @@ mod tests {
             ver: 99, // Wrong version
         };
 
-        let token = encode(
-            &Header::new(Algorithm::HS256),
-            &claims,
-            &issuer.encoding,
-        )
-        .map_err(AppError::from)?;
+        let token = encode(&Header::new(Algorithm::HS256), &claims, &issuer.encoding)
+            .map_err(AppError::from)?;
 
         let result = issuer.validate(&token);
 
