@@ -4,8 +4,8 @@ use alloy::persistence::{
     ClientId, DocumentId, DocumentStore, PostgresStore, SessionRecord, SnapshotBytes,
     SnapshotRecord, Tag, UpdateBytes, UserId,
 };
-use anyhow::{anyhow, Result};
-use rand::{thread_rng, Rng};
+use anyhow::{Result, anyhow};
+use rand::{Rng, thread_rng};
 
 fn database_url() -> Option<String> {
     env::var("TEST_DATABASE_URL")
@@ -98,10 +98,7 @@ async fn store_and_load_snapshot_roundtrip() -> Result<()> {
         .await
         .map_err(|e| anyhow!(e))?;
 
-    let specific = store
-        .load_snapshot(doc, 7)
-        .await
-        .map_err(|e| anyhow!(e))?;
+    let specific = store.load_snapshot(doc, 7).await.map_err(|e| anyhow!(e))?;
 
     assert_eq!(latest, specific);
 
@@ -196,7 +193,11 @@ async fn record_session_is_idempotent_per_client() -> Result<()> {
         .map_err(|e| anyhow!(e))?;
 
     assert_eq!(page.sessions.len(), 1);
-    let SessionRecord { seq, client: c, user: u } = page.sessions[0].clone();
+    let SessionRecord {
+        seq,
+        client: c,
+        user: u,
+    } = page.sessions[0].clone();
     assert_eq!(seq, 1);
     assert_eq!(c, client);
     assert_eq!(u, user);

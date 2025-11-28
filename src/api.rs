@@ -35,6 +35,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use tower_http::trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::Level;
+use utoipa::openapi::OpenApi as OpenApiSpec;
 use utoipa::{OpenApi, ToSchema};
 use utoipa_scalar::{Scalar, Servable};
 use yrs::updates::decoder::Decode;
@@ -94,6 +95,7 @@ pub struct ApiDoc;
 /// Build the HTTP router with all public endpoints plus the Scalar explorer at `/scalar`.
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
+        .route("/openapi.json", get(openapi_json))
         .route("/api/documents/{doc_id}/ticket", post(issue_ticket))
         .route(
             "/api/documents/{doc_id}",
@@ -127,6 +129,12 @@ pub fn router(state: Arc<AppState>) -> Router {
                 .on_response(DefaultOnResponse::new().level(Level::INFO)),
         )
         .with_state(state)
+}
+
+/// Serve OpenAPI specification as JSON.
+async fn openapi_json() -> Result<Json<OpenApiSpec>, AppError> {
+    let spec = ApiDoc::openapi();
+    Ok(Json(spec))
 }
 
 /// Open editor socket.
